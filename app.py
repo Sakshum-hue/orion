@@ -9,7 +9,7 @@ import google.generativeai as genai
 st.set_page_config(page_title="Orion AI", page_icon="🤖", layout="centered")
 
 # Configuration
-FAMPAY_UPI_ID = "yourname@fam"  # 👈 REPLACE WITH YOUR ACTUAL FAMPAY UPI ID
+FAMPAY_UPI_ID = "sakshum.mahajan@fam"  # 👈 REPLACE WITH YOUR ACTUAL FAMPAY UPI ID
 PREMIUM_PRICE_INR = 99
 FREE_DAILY_LIMIT = 20
 
