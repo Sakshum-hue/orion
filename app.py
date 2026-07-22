@@ -6,7 +6,7 @@ import streamlit as st
 import google.generativeai as genai
 
 # Page Setup
-st.set_page_config(page_title="Apex AI", page_icon="🤖", layout="centered")
+st.set_page_config(page_title="Orion AI", page_icon="🤖", layout="centered")
 
 # Configuration
 FAMPAY_UPI_ID = "yourname@fam"  # 👈 REPLACE WITH YOUR ACTUAL FAMPAY UPI ID
@@ -37,7 +37,7 @@ def call_ai_with_rotation(prompt):
                 json={
                     "model": "llama-3.3-70b-versatile",
                     "messages": [
-                        {"role": "system", "content": "You are Apex AI, a fast, smart, and helpful AI assistant."},
+                        {"role": "system", "content": "You are Orion AI, a fast, smart, and helpful AI assistant."},
                         {"role": "user", "content": prompt}
                     ]
                 },
@@ -62,7 +62,7 @@ def call_ai_with_rotation(prompt):
 # ==========================================
 # USER INTERFACE
 # ==========================================
-st.title("🤖 Apex AI Assistant")
+st.title("🤖 Orion AI Assistant")
 
 tab1, tab2 = st.tabs(["💬 Chat AI", "⚡ Upgrade to Premium"])
 
@@ -74,7 +74,7 @@ with tab1:
             st.write(msg["content"])
 
     # User Chat Input
-    if prompt := st.chat_input("Ask Apex AI anything..."):
+    if prompt := st.chat_input("Ask Orion AI anything..."):
         if not st.session_state.is_premium and st.session_state.msg_count >= FREE_DAILY_LIMIT:
             st.error(f"🔒 **Daily Free Limit Reached!** ({FREE_DAILY_LIMIT}/{FREE_DAILY_LIMIT} messages used)\n\nUpgrade in the **⚡ Upgrade to Premium** tab for unlimited access.")
         else:
@@ -85,7 +85,7 @@ with tab1:
 
             # Get AI response via invisible failover
             with st.chat_message("assistant"):
-                with st.spinner("Apex AI is thinking..."):
+                with st.spinner("Orion AI is thinking..."):
                     reply = call_ai_with_rotation(prompt)
                     st.write(reply)
                     st.session_state.messages.append({"role": "assistant", "content": reply})
@@ -97,7 +97,7 @@ with tab2:
     st.markdown(f"**Price:** ₹{PREMIUM_PRICE_INR} / month")
 
     # Generate UPI QR Code dynamically
-    upi_url = f"upi://pay?pa={FAMPAY_UPI_ID}&pn=ApexAI_Premium&am={PREMIUM_PRICE_INR}&cu=INR"
+    upi_url = f"upi://pay?pa={FAMPAY_UPI_ID}&pn=OrionAI_Premium&am={PREMIUM_PRICE_INR}&cu=INR"
     qr = qrcode.make(upi_url)
     buffer = BytesIO()
     qr.save(buffer, format="PNG")
