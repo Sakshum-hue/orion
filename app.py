@@ -3,7 +3,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 # ==========================================
-# 1. PAGE SETUP
+# 1. PAGE SETUP & GLASSMORPHISM CSS
 # ==========================================
 st.set_page_config(
     page_title="Orion AI Assistant",
@@ -12,20 +12,12 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# ==========================================
-# 2. CUSTOM GLASSMORPHISM & UI OVERRIDES
-# ==========================================
 st.markdown("""
 <style>
-/* Hide standard Streamlit header & footer */
 #MainMenu, footer, header { visibility: hidden; }
+.block-container { padding: 0rem !important; max-width: 100% !important; }
 
-.block-container {
-    padding: 0rem !important;
-    max-width: 100% !important;
-}
-
-/* Floating Glassmorphic Chat Messages */
+/* Translucent floating chat messages */
 [data-testid="stChatMessage"] {
     background: rgba(15, 23, 42, 0.75) !important;
     backdrop-filter: blur(12px) !important;
@@ -36,7 +28,7 @@ st.markdown("""
     padding: 12px 18px !important;
 }
 
-/* Glassmorphic Chat Input Bar Fixed at Bottom */
+/* Glassmorphic input bar fixed at the bottom */
 .stChatInputContainer {
     position: fixed !important;
     bottom: 25px !important;
@@ -55,95 +47,36 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 3. EMBEDDED THREE.JS 3D BLACK HOLE CANVAS
+# 2. YOUR ORIGINAL THREE.JS ENGINE
 # ==========================================
-BLACK_HOLE_HTML = """
+# Paste your exact HTML / Three.js / GLSL Shader code here inside triple quotes
+HTML_CODE = """
 <!DOCTYPE html>
 <html>
 <head>
-    <style>
-        body { margin: 0; overflow: hidden; background-color: #030712; }
-        canvas { display: block; width: 100vw; height: 100vh; }
-    </style>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- YOUR ORIGINAL FULL HTML & THREE.JS HEAD & SHADERS HERE -->
 </head>
 <body>
-    <script>
-        const scene = new THREE.Scene();
-        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-        const renderer = new THREE.WebGLRenderer({ antialias: true });
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        document.body.appendChild(renderer.domElement);
-
-        // Starfield Background
-        const starsGeometry = new THREE.BufferGeometry();
-        const starsCount = 2500;
-        const starPositions = new Float32Array(starsCount * 3);
-        for(let i = 0; i < starsCount * 3; i++) {
-            starPositions[i] = (Math.random() - 0.5) * 120;
-        }
-        starsGeometry.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
-        const starsMaterial = new THREE.PointsMaterial({ color: 0x88ccff, size: 0.12 });
-        const starField = new THREE.Points(starsGeometry, starsMaterial);
-        scene.add(starField);
-
-        // Event Horizon (Black Hole Center)
-        const sphereGeo = new THREE.SphereGeometry(1.8, 64, 64);
-        const sphereMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
-        const blackHole = new THREE.Mesh(sphereGeo, sphereMat);
-        scene.add(blackHole);
-
-        // Accretion Ring Glow
-        const ringGeo = new THREE.RingGeometry(2.1, 4.8, 64);
-        const ringMat = new THREE.MeshBasicMaterial({ 
-            color: 0x00f0ff, 
-            side: THREE.DoubleSide, 
-            transparent: true, 
-            opacity: 0.75 
-        });
-        const ring = new THREE.Mesh(ringGeo, ringMat);
-        ring.rotation.x = Math.PI / 2.3;
-        scene.add(ring);
-
-        camera.position.z = 6;
-
-        // Animation Loop
-        function animate() {
-            requestAnimationFrame(animate);
-            ring.rotation.z += 0.006;
-            starField.rotation.y += 0.0003;
-            renderer.render(scene, camera);
-        }
-        animate();
-
-        // Responsive resizing
-        window.addEventListener('resize', () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        });
-    </script>
+    <!-- YOUR ORIGINAL CANVAS & SCRIPT HERE -->
 </body>
 </html>
 """
 
-# Render 3D WebGL Canvas
-components.html(BLACK_HOLE_HTML, height=750, scrolling=False)
+# Render your full 3D canvas
+components.html(HTML_CODE, height=850, scrolling=False)
 
 # ==========================================
-# 4. CHAT STATE & MESSAGES
+# 3. CHAT HISTORY & AI RESPONSE LOGIC
 # ==========================================
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Display conversation history
+# Display message history above the input bar
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# ==========================================
-# 5. CHAT INPUT & LLM RESPONSE
-# ==========================================
+# Retrieve API key from secrets or environment
 api_key = st.secrets.get("GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY", None))
 
 if prompt := st.chat_input("Ask Orion anything..."):
@@ -152,10 +85,10 @@ if prompt := st.chat_input("Ask Orion anything..."):
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # Generate assistant response
+    # Stream AI response
     with st.chat_message("assistant"):
         if not api_key:
-            msg = "⚠️ **API Key missing!** Add `GEMINI_API_KEY = 'your_key'` inside your `.streamlit/secrets.toml` file to enable AI responses."
+            msg = "⚠️ **API Key missing!** Add `GEMINI_API_KEY = 'your_key'` in `.streamlit/secrets.toml`."
             st.warning(msg)
             st.session_state.messages.append({"role": "assistant", "content": msg})
         else:
@@ -166,7 +99,6 @@ if prompt := st.chat_input("Ask Orion anything..."):
                 response_placeholder = st.empty()
                 full_response = ""
 
-                # Stream response live
                 response_stream = client.models.generate_content_stream(
                     model="gemini-2.5-flash",
                     contents=prompt
