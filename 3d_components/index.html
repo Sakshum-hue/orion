@@ -436,6 +436,7 @@ components.html(
             hintEl.style.opacity = '0';
             setActiveLegend(cfg.name);
             spawnPing(planet.mesh.position, cfg.rimColor);
+            sendToStreamlit({ name: cfg.name, type: cfg.klass });
         }
 
         function defocus() {
@@ -1329,6 +1330,15 @@ components.html(
         }
         animate();
     })();
+    </script>
+
+    <script>
+      function sendToStreamlit(data) {
+        window.parent.postMessage({
+          type: "streamlit:setComponentValue",
+          value: data
+        }, "*");
+      }
     </script>
     """,
     height=850,
