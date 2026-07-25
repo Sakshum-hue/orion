@@ -26,7 +26,7 @@ hide_streamlit_style = """
 """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
-# --- 3D Black Hole Background + Glass UI ---
+# --- Living, Interactive Black Hole Universe ---
 components.html(
     """
     <style>
@@ -40,7 +40,9 @@ components.html(
             display: block;
             z-index: -1;
             background: #000000;
+            cursor: grab;
         }
+        #bh-canvas:active { cursor: grabbing; }
 
         .glass-panel {
             background: rgba(255, 255, 255, 0.05);
@@ -49,30 +51,35 @@ components.html(
             backdrop-filter: blur(8.5px);
             -webkit-backdrop-filter: blur(8.5px);
             border: 1px solid rgba(255, 255, 255, 0.12);
-            position: fixed;
-            left: 50%;
-            transform: translateX(-50%);
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            pointer-events: none;
         }
 
-        .header-panel {
-            top: 6vh;
-            width: 80%;
-            height: 14vh;
+        .header-wrap {
+            position: fixed;
+            top: 4vh;
+            left: 50%;
+            transform: translateX(-50%);
+            text-align: center;
+            z-index: 2;
+            pointer-events: none;
+            animation: floatY 6s ease-in-out infinite;
+        }
+        @keyframes floatY {
+            0%, 100% { transform: translateX(-50%) translateY(0px); }
+            50% { transform: translateX(-50%) translateY(-6px); }
         }
 
         .orion-text-main {
-            color: rgba(255, 255, 255, 0.92);
+            color: rgba(255, 255, 255, 0.94);
             font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
             font-weight: 800;
             font-size: 4.2rem;
-            text-shadow: 0 0 25px rgba(90, 160, 255, 0.55);
             letter-spacing: -2px;
             margin: 0;
+            animation: glowPulse 4s ease-in-out infinite;
+        }
+        @keyframes glowPulse {
+            0%, 100% { text-shadow: 0 0 22px rgba(90, 160, 255, 0.45), 0 0 4px rgba(255,255,255,0.3); }
+            50% { text-shadow: 0 0 40px rgba(120, 190, 255, 0.85), 0 0 10px rgba(255,255,255,0.5); }
         }
 
         .orion-text-sub {
@@ -90,27 +97,69 @@ components.html(
             bottom: 4vh;
             left: 50%;
             transform: translateX(-50%);
-            color: rgba(255,255,255,0.35);
+            color: rgba(255,255,255,0.4);
             font-family: -apple-system, sans-serif;
             font-size: 0.8rem;
             letter-spacing: 1px;
             pointer-events: none;
+            text-align: center;
+            transition: opacity 0.4s ease;
+        }
+
+        .info-panel {
+            position: fixed;
+            left: 4vw;
+            bottom: 6vh;
+            max-width: 340px;
+            padding: 18px 22px;
+            z-index: 3;
+            opacity: 0;
+            transform: translateY(14px);
+            transition: opacity 0.5s ease, transform 0.5s ease;
+            pointer-events: none;
+        }
+        .info-panel.visible { opacity: 1; transform: translateY(0px); }
+        .info-name {
+            color: #eaf4ff;
+            font-family: 'SF Pro Display', -apple-system, sans-serif;
+            font-weight: 700;
+            font-size: 1.3rem;
+            letter-spacing: 1px;
+            margin: 0 0 6px 0;
+        }
+        .info-desc {
+            color: rgba(210, 228, 255, 0.8);
+            font-family: -apple-system, sans-serif;
+            font-weight: 400;
+            font-size: 0.92rem;
+            line-height: 1.4;
+            margin: 0;
         }
     </style>
 
     <canvas id="bh-canvas"></canvas>
 
-    <div style="position: fixed; top: 4vh; left: 50%; transform: translateX(-50%); text-align: center; z-index: 2;">
+    <div class="header-wrap">
         <h1 class="orion-text-main">ORION AI</h1>
         <div class="orion-text-sub">Event Horizon Interface</div>
     </div>
 
-    <div class="hint">drag to orbit &nbsp;•&nbsp; scroll to zoom</div>
+    <div class="hint" id="hint">drag to orbit &nbsp;•&nbsp; scroll to zoom &nbsp;•&nbsp; click a world to explore</div>
+
+    <div class="glass-panel info-panel" id="info-panel">
+        <p class="info-name" id="info-name">—</p>
+        <p class="info-desc" id="info-desc">—</p>
+    </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script>
     (function () {
         const canvas = document.getElementById('bh-canvas');
+        const hintEl = document.getElementById('hint');
+        const infoPanel = document.getElementById('info-panel');
+        const infoName = document.getElementById('info-name');
+        const infoDesc = document.getElementById('info-desc');
+
         const renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, alpha: false });
         const pixelRatio = Math.min(window.devicePixelRatio, 2);
         renderer.setPixelRatio(pixelRatio);
@@ -119,7 +168,6 @@ components.html(
         const scene = new THREE.Scene();
         const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
 
-        // ---------- Offscreen render target (for lensing + bloom post-process) ----------
         let rt = new THREE.WebGLRenderTarget(1, 1, {
             minFilter: THREE.LinearFilter,
             magFilter: THREE.LinearFilter,
@@ -137,30 +185,62 @@ components.html(
         }
         window.addEventListener('resize', sizeToWindow);
 
-        // ---------- Orbit camera controls (no external deps) ----------
+        // ================= CAMERA: orbit + focus-follow + cursor parallax =================
         let radius = 13, theta = Math.PI / 2.25, phi = Math.PI / 2.05;
         let targetTheta = theta, targetPhi = phi, targetRadius = radius;
-        let isDragging = false, lastX = 0, lastY = 0;
+        let isDragging = false, dragMoved = false, lastX = 0, lastY = 0, downX = 0, downY = 0, downTime = 0;
         let autoRotate = true;
 
+        const orbitCenter = new THREE.Vector3(0, 0, 0);
+        const targetCenter = new THREE.Vector3(0, 0, 0);
+        let focusedPlanet = null;
+
+        let parallaxX = 0, parallaxY = 0, parallaxTargetX = 0, parallaxTargetY = 0;
+
         function updateCamera() {
-            theta += (targetTheta - theta) * 0.08;
-            phi += (targetPhi - phi) * 0.08;
-            radius += (targetRadius - radius) * 0.08;
-            const x = radius * Math.sin(phi) * Math.cos(theta);
-            const y = radius * Math.cos(phi);
-            const z = radius * Math.sin(phi) * Math.sin(theta);
+            theta += (targetTheta - theta) * 0.07;
+            phi += (targetPhi - phi) * 0.07;
+            radius += (targetRadius - radius) * 0.07;
+            parallaxX += (parallaxTargetX - parallaxX) * 0.04;
+            parallaxY += (parallaxTargetY - parallaxY) * 0.04;
+
+            if (focusedPlanet) {
+                targetCenter.copy(focusedPlanet.mesh.position);
+            } else {
+                targetCenter.set(0, 0, 0);
+            }
+            orbitCenter.lerp(targetCenter, 0.08);
+
+            const useTheta = theta + parallaxX;
+            const usePhi = Math.max(0.35, Math.min(Math.PI - 0.35, phi + parallaxY));
+
+            const x = orbitCenter.x + radius * Math.sin(usePhi) * Math.cos(useTheta);
+            const y = orbitCenter.y + radius * Math.cos(usePhi);
+            const z = orbitCenter.z + radius * Math.sin(usePhi) * Math.sin(useTheta);
             camera.position.set(x, y, z);
-            camera.lookAt(0, 0, 0);
+            camera.lookAt(orbitCenter);
         }
 
         canvas.addEventListener('pointerdown', (e) => {
-            isDragging = true; autoRotate = false;
-            lastX = e.clientX; lastY = e.clientY;
+            isDragging = true; dragMoved = false; autoRotate = false;
+            lastX = downX = e.clientX; lastY = downY = e.clientY;
+            downTime = performance.now();
         });
-        window.addEventListener('pointerup', () => { isDragging = false; });
+        window.addEventListener('pointerup', (e) => {
+            isDragging = false;
+            const dx = e.clientX - downX, dy = e.clientY - downY;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            const elapsed = performance.now() - downTime;
+            if (dist < 6 && elapsed < 400) handleClick(e);
+        });
         window.addEventListener('pointermove', (e) => {
+            const nx = (e.clientX / window.innerWidth) * 2 - 1;
+            const ny = (e.clientY / window.innerHeight) * 2 - 1;
+            parallaxTargetX = nx * 0.18;
+            parallaxTargetY = ny * 0.1;
+
             if (!isDragging) return;
+            dragMoved = true;
             const dx = e.clientX - lastX;
             const dy = e.clientY - lastY;
             lastX = e.clientX; lastY = e.clientY;
@@ -171,17 +251,69 @@ components.html(
         canvas.addEventListener('wheel', (e) => {
             e.preventDefault();
             targetRadius += e.deltaY * 0.01;
-            targetRadius = Math.max(6, Math.min(28, targetRadius));
+            targetRadius = Math.max(2.5, Math.min(30, targetRadius));
         }, { passive: false });
 
-        // ---------- High-resolution deep-space skybox (nebula + stars, painted procedurally) ----------
+        // ================= RAYCAST CLICK: focus planets, pulse the hole =================
+        const raycaster = new THREE.Raycaster();
+        const ndc = new THREE.Vector2();
+        const meshToPlanet = new Map();
+
+        let pulseStart = -999;
+        function triggerPulse() { pulseStart = clock.getElapsedTime(); }
+
+        function focusPlanet(planet, cfg) {
+            focusedPlanet = planet;
+            targetRadius = Math.max(2.2, cfg.size * 7.5);
+            infoName.textContent = cfg.name;
+            infoDesc.textContent = cfg.desc;
+            infoPanel.classList.add('visible');
+            hintEl.style.opacity = '0';
+            spawnPing(planet.mesh.position, cfg.rimColor);
+        }
+
+        function defocus() {
+            focusedPlanet = null;
+            targetRadius = 13;
+            infoPanel.classList.remove('visible');
+            hintEl.style.opacity = '1';
+        }
+
+        function handleClick(e) {
+            const rect = canvas.getBoundingClientRect();
+            ndc.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+            ndc.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+            raycaster.setFromCamera(ndc, camera);
+
+            const planetMeshes = planets.map((p) => p.mesh);
+            const hits = raycaster.intersectObjects(planetMeshes, true);
+            if (hits.length > 0) {
+                let obj = hits[0].object;
+                while (obj && !meshToPlanet.has(obj)) obj = obj.parent;
+                if (obj) {
+                    const entry = meshToPlanet.get(obj);
+                    focusPlanet(entry.planet, entry.cfg);
+                    triggerPulse();
+                    return;
+                }
+            }
+
+            const horizonHit = raycaster.intersectObject(horizon, false);
+            triggerPulse();
+            if (horizonHit.length > 0) {
+                defocus();
+                return;
+            }
+            defocus();
+        }
+
+        // ================= SKYBOX: procedural high-res deep-space nebula =================
         function makeSpaceSkyboxTexture() {
             const w = 4096, h = 2048;
             const c = document.createElement('canvas');
             c.width = w; c.height = h;
             const ctx = c.getContext('2d');
 
-            // Deep space base gradient (near-black with a faint navy tone)
             const base = ctx.createLinearGradient(0, 0, 0, h);
             base.addColorStop(0, '#02030a');
             base.addColorStop(0.5, '#04050f');
@@ -189,7 +321,6 @@ components.html(
             ctx.fillStyle = base;
             ctx.fillRect(0, 0, w, h);
 
-            // Soft nebula clouds in blues/violets/teals, all matching the theme
             const nebulaColors = [
                 'rgba(70, 110, 220, 0.10)',
                 'rgba(40, 160, 210, 0.09)',
@@ -210,7 +341,6 @@ components.html(
                 ctx.fill();
             }
 
-            // Faint wispy dust lanes
             ctx.globalAlpha = 0.05;
             for (let i = 0; i < 6; i++) {
                 ctx.strokeStyle = 'rgba(150,180,255,0.5)';
@@ -218,19 +348,17 @@ components.html(
                 ctx.beginPath();
                 const sy = Math.random() * h;
                 ctx.moveTo(0, sy);
-                ctx.bezierCurveTo(w*0.3, sy + (Math.random()-0.5)*300, w*0.7, sy + (Math.random()-0.5)*300, w, sy + (Math.random()-0.5)*200);
+                ctx.bezierCurveTo(w * 0.3, sy + (Math.random() - 0.5) * 300, w * 0.7, sy + (Math.random() - 0.5) * 300, w, sy + (Math.random() - 0.5) * 200);
                 ctx.stroke();
             }
             ctx.globalAlpha = 1.0;
 
-            // Background stars: many tiny faint dots
             for (let i = 0; i < 9000; i++) {
                 const x = Math.random() * w;
                 const y = Math.random() * h;
                 const b = Math.random();
                 const size = b < 0.85 ? 0.7 : (b < 0.97 ? 1.3 : 2.0);
                 const alpha = 0.25 + Math.random() * 0.55;
-                // subtle warm/cool tint variety, mostly white-blue like real star photography
                 const tint = Math.random();
                 let color;
                 if (tint < 0.7) color = `rgba(255,255,255,${alpha})`;
@@ -242,7 +370,6 @@ components.html(
                 ctx.fill();
             }
 
-            // Foreground hero stars with soft glow + subtle cross flare
             for (let i = 0; i < 55; i++) {
                 const x = Math.random() * w;
                 const y = Math.random() * h;
@@ -278,7 +405,6 @@ components.html(
         }
         scene.background = makeSpaceSkyboxTexture();
 
-        // A handful of crisp foreground stars for subtle parallax as the camera orbits
         function makeForegroundStars(count, minR, maxR) {
             const geo = new THREE.BufferGeometry();
             const pos = new Float32Array(count * 3);
@@ -299,13 +425,13 @@ components.html(
         }
         scene.add(makeForegroundStars(500, 60, 150));
 
-        // ---------- Soft blue glow halo (sprite from canvas gradient) ----------
+        // ================= GLOW HALO SPRITE =================
         function makeGlowTexture() {
             const size = 256;
             const c = document.createElement('canvas');
             c.width = c.height = size;
             const ctx = c.getContext('2d');
-            const g = ctx.createRadialGradient(size/2, size/2, 0, size/2, size/2, size/2);
+            const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
             g.addColorStop(0, 'rgba(200, 225, 255, 0.95)');
             g.addColorStop(0.3, 'rgba(110, 175, 255, 0.5)');
             g.addColorStop(1, 'rgba(20, 40, 90, 0)');
@@ -320,7 +446,7 @@ components.html(
         glowSprite.scale.set(10, 10, 1);
         scene.add(glowSprite);
 
-        // ---------- Event horizon (pure black sphere) ----------
+        // ================= EVENT HORIZON + PHOTON RING =================
         const horizonRadius = 1.5;
         const horizon = new THREE.Mesh(
             new THREE.SphereGeometry(horizonRadius, 96, 96),
@@ -328,7 +454,6 @@ components.html(
         );
         scene.add(horizon);
 
-        // Rim glow (simulated light bending at the edge)
         const rim = new THREE.Mesh(
             new THREE.SphereGeometry(horizonRadius * 1.06, 64, 64),
             new THREE.MeshBasicMaterial({
@@ -338,7 +463,6 @@ components.html(
         );
         scene.add(rim);
 
-        // Thin bright photon ring (Einstein ring at the horizon edge)
         const photonRing = new THREE.Mesh(
             new THREE.TorusGeometry(horizonRadius * 1.12, 0.015, 16, 128),
             new THREE.MeshBasicMaterial({
@@ -347,7 +471,7 @@ components.html(
         );
         scene.add(photonRing);
 
-        // ---------- Accretion disk shader (shared code, turbulence + Doppler beaming) ----------
+        // ================= ACCRETION DISK: turbulence, Doppler beaming, palette breathing, pulse =================
         const diskVertex = `
             varying float vDist;
             varying vec2 vUv2;
@@ -362,6 +486,7 @@ components.html(
             uniform float uInner;
             uniform float uOuter;
             uniform float uOpacity;
+            uniform float uPulse;
             varying float vDist;
             varying vec2 vUv2;
 
@@ -384,18 +509,29 @@ components.html(
 
                 float turb = fbm(vec2(angle * 2.4, vDist * 0.9 - uTime * 0.55));
 
-                vec3 hot = vec3(1.0, 0.98, 0.94);
-                vec3 whiteBlue = vec3(0.78, 0.9, 1.0);
-                vec3 blue = vec3(0.22, 0.52, 1.0);
-                vec3 deep = vec3(0.02, 0.07, 0.28);
+                vec3 hotA = vec3(1.0, 0.98, 0.94);
+                vec3 midA = vec3(0.78, 0.9, 1.0);
+                vec3 blueA = vec3(0.22, 0.52, 1.0);
+                vec3 deepA = vec3(0.02, 0.07, 0.28);
 
-                vec3 color = mix(hot, whiteBlue, smoothstep(0.0, 0.16, t));
+                vec3 hotB = vec3(1.0, 0.95, 0.99);
+                vec3 midB = vec3(0.72, 0.78, 1.0);
+                vec3 blueB = vec3(0.42, 0.32, 1.0);
+                vec3 deepB = vec3(0.08, 0.03, 0.32);
+
+                float pal = 0.5 + 0.5 * sin(uTime * 0.045);
+                vec3 hot = mix(hotA, hotB, pal * 0.45);
+                vec3 mid = mix(midA, midB, pal * 0.45);
+                vec3 blue = mix(blueA, blueB, pal * 0.45);
+                vec3 deep = mix(deepA, deepB, pal * 0.45);
+
+                vec3 color = mix(hot, mid, smoothstep(0.0, 0.16, t));
                 color = mix(color, blue, smoothstep(0.16, 0.52, t));
                 color = mix(color, deep, smoothstep(0.52, 1.0, t));
 
-                // relativistic Doppler beaming: one side brighter, other dimmer, as disk spins
                 float beam = 0.5 + 0.5 * cos(angle - uTime * 0.5);
                 color *= mix(0.55, 1.5, beam);
+                color += uPulse * vec3(0.5, 0.7, 1.0) * (1.0 - t) * 0.8;
 
                 float density = 0.35 + 0.65 * turb;
                 float alpha = (1.0 - t) * density * uOpacity;
@@ -406,13 +542,14 @@ components.html(
             }
         `;
 
-        function makeDiskMaterial(inner, outer, opacity) {
-            return new THREE.ShaderMaterial({
+        function makeDiskMaterial(inner, outer, baseOpacity) {
+            const mat = new THREE.ShaderMaterial({
                 uniforms: {
                     uTime: { value: 0 },
                     uInner: { value: inner },
                     uOuter: { value: outer },
-                    uOpacity: { value: opacity }
+                    uOpacity: { value: baseOpacity },
+                    uPulse: { value: 0 }
                 },
                 vertexShader: diskVertex,
                 fragmentShader: diskFragment,
@@ -421,32 +558,31 @@ components.html(
                 blending: THREE.AdditiveBlending,
                 depthWrite: false
             });
+            mat.userData.baseOpacity = baseOpacity;
+            return mat;
         }
 
         const innerR = horizonRadius * 1.28;
         const outerR = horizonRadius * 5.4;
 
-        // Main tilted accretion disk
         const diskMat = makeDiskMaterial(innerR, outerR, 1.0);
         const disk = new THREE.Mesh(new THREE.RingGeometry(innerR, outerR, 160, 10), diskMat);
         disk.rotation.x = Math.PI / 2.55;
         scene.add(disk);
 
-        // Secondary "lensed" halo ring standing more upright, mimicking the far side
-        // of the disk bent by gravity to appear above/below the horizon (Interstellar-style halo)
         const haloMat = makeDiskMaterial(innerR * 0.92, outerR * 0.62, 0.55);
         const halo = new THREE.Mesh(new THREE.RingGeometry(innerR * 0.92, outerR * 0.62, 160, 8), haloMat);
         halo.rotation.x = Math.PI / 2 - 0.28;
         halo.rotation.z = Math.PI / 2;
         scene.add(halo);
 
-        // ---------- Lighting for planets (the disk acts as the light source) ----------
+        // ================= LIGHTING FOR PLANETS =================
         scene.add(new THREE.AmbientLight(0x1a2a4a, 0.55));
         const diskLight = new THREE.PointLight(0xbfe0ff, 2.4, 90, 2);
         diskLight.position.set(0, 0, 0);
         scene.add(diskLight);
 
-        // ---------- Orbiting planets (procedurally textured, lit, with rim glow) ----------
+        // ================= PLANETS: textured, lit, named, clickable =================
         function makeRockyPlanetTexture(baseColor, accentColor) {
             const w = 512, h = 256;
             const c = document.createElement('canvas');
@@ -507,15 +643,20 @@ components.html(
         `;
 
         const planetsConfig = [
-            { size: 0.55, orbit: 10.5, speed: 0.0055, tilt: 0.16, spin: 0.012,
+            { name: 'Ember', desc: 'A scorched wanderer, forever circling too close to the light.',
+              size: 0.55, orbit: 10.5, speed: 0.0055, tilt: 0.16, spin: 0.012,
               texture: makeRockyPlanetTexture('#8a4a3a', '#e0895c'), rimColor: 0xff9a66 },
-            { size: 0.4, orbit: 12.8, speed: 0.0042, tilt: -0.1, spin: 0.014,
+            { name: 'Azure', desc: 'Frozen oceans beneath a frostbitten, silent sky.',
+              size: 0.4, orbit: 12.8, speed: 0.0042, tilt: -0.1, spin: 0.014,
               texture: makeRockyPlanetTexture('#2a5a8a', '#7fc4ff'), rimColor: 0x7fd0ff },
-            { size: 1.0, orbit: 16.5, speed: 0.0026, tilt: 0.06, spin: 0.02,
+            { name: 'Helios', desc: 'A giant crowned in stardust rings, drifting on ancient winds.',
+              size: 1.0, orbit: 16.5, speed: 0.0026, tilt: 0.06, spin: 0.02,
               texture: makeBandedPlanetTexture(['#dcc192', '#c8a06e', '#eed8ae', '#b8905c']), rimColor: 0xffe0ac, ring: true },
-            { size: 0.5, orbit: 20, speed: 0.002, tilt: 0.22, spin: 0.009,
+            { name: 'Verdant', desc: 'A world humming with borrowed light, teeming with quiet color.',
+              size: 0.5, orbit: 20, speed: 0.002, tilt: 0.22, spin: 0.009,
               texture: makeRockyPlanetTexture('#2a6a52', '#63e0ae'), rimColor: 0x74f0c4 },
-            { size: 0.22, orbit: 23, speed: 0.0016, tilt: -0.12, spin: 0.016,
+            { name: 'Luna', desc: 'The quiet one, drifting at the edge of the dark.',
+              size: 0.22, orbit: 23, speed: 0.0016, tilt: -0.12, spin: 0.016,
               texture: makeRockyPlanetTexture('#7d7d7d', '#c2c2c2'), rimColor: 0xd6d6d6 }
         ];
 
@@ -547,22 +688,39 @@ components.html(
                     side: THREE.DoubleSide,
                     depthWrite: false
                 });
-                const ring = new THREE.Mesh(new THREE.RingGeometry(cfg.size * 1.4, cfg.size * 2.3, 96, 4), ringMat);
-                ring.rotation.x = Math.PI / 2.3;
-                mesh.add(ring);
+                const ringMesh = new THREE.Mesh(new THREE.RingGeometry(cfg.size * 1.4, cfg.size * 2.3, 96, 4), ringMat);
+                ringMesh.rotation.x = Math.PI / 2.3;
+                mesh.add(ringMesh);
             }
 
-            planets.push({
+            const planetEntry = {
                 mesh: mesh,
                 orbit: cfg.orbit,
                 speed: cfg.speed,
                 angle: Math.random() * Math.PI * 2,
                 tilt: cfg.tilt,
                 spin: cfg.spin
-            });
+            };
+            planets.push(planetEntry);
+            meshToPlanet.set(mesh, { planet: planetEntry, cfg: cfg });
         });
 
-        // ---------- Orbiting sparkle particles within the disk ----------
+        // ================= "PING" - a quick expanding ring shown on interaction =================
+        const pings = [];
+        function spawnPing(position, color) {
+            const geo = new THREE.RingGeometry(0.01, 0.05, 48);
+            const mat = new THREE.MeshBasicMaterial({
+                color: color, transparent: true, opacity: 0.9,
+                side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false
+            });
+            const mesh = new THREE.Mesh(geo, mat);
+            mesh.position.copy(position);
+            mesh.lookAt(camera.position);
+            scene.add(mesh);
+            pings.push({ mesh: mesh, birth: clock.getElapsedTime() });
+        }
+
+        // ================= ORBITING SPARKLE PARTICLES WITHIN THE DISK =================
         const particleCount = 1100;
         const particleGeo = new THREE.BufferGeometry();
         const particlePos = new Float32Array(particleCount * 3);
@@ -584,7 +742,36 @@ components.html(
         particles.rotation.x = Math.PI / 2.55;
         scene.add(particles);
 
-        // ---------- Post-processing pass: gravitational lensing distortion + bloom ----------
+        // ================= INFALLING MATTER: streaks spiraling into the horizon =================
+        const infallCount = 260;
+        const infallGeo = new THREE.BufferGeometry();
+        const infallPos = new Float32Array(infallCount * 3);
+        const infallData = [];
+        function resetInfall(d) {
+            d.r = outerR * (0.8 + Math.random() * 0.9);
+            d.a = Math.random() * Math.PI * 2;
+            d.fallSpeed = 0.01 + Math.random() * 0.02;
+            d.spinSpeed = 0.01 + Math.random() * 0.02;
+            d.y = (Math.random() - 0.5) * 0.3;
+        }
+        for (let i = 0; i < infallCount; i++) {
+            const d = {};
+            resetInfall(d);
+            infallData.push(d);
+            infallPos[i * 3] = d.r * Math.cos(d.a);
+            infallPos[i * 3 + 1] = d.y;
+            infallPos[i * 3 + 2] = d.r * Math.sin(d.a);
+        }
+        infallGeo.setAttribute('position', new THREE.BufferAttribute(infallPos, 3));
+        const infallMat = new THREE.PointsMaterial({
+            color: 0xaad4ff, size: 0.06, transparent: true, opacity: 0.85,
+            blending: THREE.AdditiveBlending, depthWrite: false
+        });
+        const infall = new THREE.Points(infallGeo, infallMat);
+        infall.rotation.x = Math.PI / 2.55;
+        scene.add(infall);
+
+        // ================= POST-PROCESS: gravitational lensing + bloom =================
         const postScene = new THREE.Scene();
         const postCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
         const postMat = new THREE.ShaderMaterial({
@@ -661,17 +848,29 @@ components.html(
             return new THREE.Vector2((v.x + 1) / 2, (v.y + 1) / 2);
         }
 
-        // ---------- Animate ----------
+        // ================= ANIMATE =================
         const clock = new THREE.Clock();
 
         function animate() {
             requestAnimationFrame(animate);
             const t = clock.getElapsedTime();
 
+            const pulseAge = t - pulseStart;
+            const pulse = pulseAge >= 0 ? Math.exp(-pulseAge * 3.0) : 0;
+
             diskMat.uniforms.uTime.value = t;
+            diskMat.uniforms.uPulse.value = pulse;
+            diskMat.uniforms.uOpacity.value = diskMat.userData.baseOpacity * (0.9 + 0.1 * Math.sin(t * 0.7)) + pulse * 0.3;
+
             haloMat.uniforms.uTime.value = t * 0.8;
+            haloMat.uniforms.uPulse.value = pulse * 0.7;
+            haloMat.uniforms.uOpacity.value = haloMat.userData.baseOpacity * (0.9 + 0.1 * Math.sin(t * 0.7 + 1.0)) + pulse * 0.2;
+
             disk.rotation.z += 0.0015;
             halo.rotation.y += 0.0009;
+
+            rim.material.opacity = 0.4 + pulse * 0.5;
+            photonRing.material.opacity = 0.95 * (0.85 + 0.15 * Math.sin(t * 1.4)) + pulse * 0.1;
 
             const posAttr = particleGeo.attributes.position;
             for (let i = 0; i < particleCount; i++) {
@@ -682,7 +881,19 @@ components.html(
             }
             posAttr.needsUpdate = true;
 
-            glowSprite.scale.setScalar(10 + Math.sin(t * 0.6) * 0.35);
+            const infallAttr = infallGeo.attributes.position;
+            for (let i = 0; i < infallCount; i++) {
+                const d = infallData[i];
+                d.r -= d.fallSpeed;
+                d.a += d.spinSpeed * (outerR / Math.max(d.r, 0.5)) * 0.03;
+                if (d.r < innerR * 1.05) resetInfall(d);
+                infallAttr.array[i * 3] = d.r * Math.cos(d.a);
+                infallAttr.array[i * 3 + 1] = d.y * (d.r / outerR);
+                infallAttr.array[i * 3 + 2] = d.r * Math.sin(d.a);
+            }
+            infallAttr.needsUpdate = true;
+
+            glowSprite.scale.setScalar(10 + Math.sin(t * 0.6) * 0.35 + pulse * 1.2);
 
             planets.forEach((p) => {
                 p.angle += p.speed;
@@ -692,6 +903,20 @@ components.html(
                 p.mesh.position.set(x, y, z);
                 p.mesh.rotation.y += p.spin;
             });
+
+            for (let i = pings.length - 1; i >= 0; i--) {
+                const ping = pings[i];
+                const age = t - ping.birth;
+                if (age > 1.2) {
+                    scene.remove(ping.mesh);
+                    pings.splice(i, 1);
+                    continue;
+                }
+                const scale = 0.3 + age * 3.5;
+                ping.mesh.scale.setScalar(scale);
+                ping.mesh.material.opacity = 0.9 * (1.0 - age / 1.2);
+                ping.mesh.lookAt(camera.position);
+            }
 
             if (autoRotate) {
                 targetTheta += 0.0012;
