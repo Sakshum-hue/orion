@@ -440,6 +440,128 @@ components.html(
         halo.rotation.z = Math.PI / 2;
         scene.add(halo);
 
+        // ---------- Lighting for planets (the disk acts as the light source) ----------
+        scene.add(new THREE.AmbientLight(0x1a2a4a, 0.55));
+        const diskLight = new THREE.PointLight(0xbfe0ff, 2.4, 90, 2);
+        diskLight.position.set(0, 0, 0);
+        scene.add(diskLight);
+
+        // ---------- Orbiting planets (procedurally textured, lit, with rim glow) ----------
+        function makeRockyPlanetTexture(baseColor, accentColor) {
+            const w = 512, h = 256;
+            const c = document.createElement('canvas');
+            c.width = w; c.height = h;
+            const ctx = c.getContext('2d');
+            ctx.fillStyle = baseColor;
+            ctx.fillRect(0, 0, w, h);
+            for (let i = 0; i < 300; i++) {
+                const x = Math.random() * w;
+                const y = Math.random() * h;
+                const r = 2 + Math.random() * 12;
+                ctx.fillStyle = accentColor;
+                ctx.globalAlpha = 0.1 + Math.random() * 0.2;
+                ctx.beginPath();
+                ctx.arc(x, y, r, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.globalAlpha = 1.0;
+            return new THREE.CanvasTexture(c);
+        }
+
+        function makeBandedPlanetTexture(colors) {
+            const w = 512, h = 256;
+            const c = document.createElement('canvas');
+            c.width = w; c.height = h;
+            const ctx = c.getContext('2d');
+            const bands = 12;
+            for (let i = 0; i < bands; i++) {
+                ctx.fillStyle = colors[i % colors.length];
+                const y0 = (h / bands) * i;
+                ctx.fillRect(0, y0, w, h / bands + 2);
+            }
+            ctx.globalAlpha = 0.18;
+            for (let i = 0; i < 45; i++) {
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 1 + Math.random() * 2;
+                ctx.beginPath();
+                const y = Math.random() * h;
+                ctx.moveTo(0, y);
+                ctx.bezierCurveTo(w * 0.3, y + (Math.random() - 0.5) * 20, w * 0.7, y + (Math.random() - 0.5) * 20, w, y + (Math.random() - 0.5) * 10);
+                ctx.stroke();
+            }
+            ctx.globalAlpha = 1.0;
+            return new THREE.CanvasTexture(c);
+        }
+
+        const ringFragment = `
+            uniform vec3 uColor;
+            uniform float uInner;
+            uniform float uOuter;
+            varying float vDist;
+            void main() {
+                float t = clamp((vDist - uInner) / (uOuter - uInner), 0.0, 1.0);
+                float stripe = sin(t * 45.0) * 0.15 + 0.85;
+                float alpha = (0.3 + 0.35 * stripe) * smoothstep(0.0, 0.06, t) * (1.0 - smoothstep(0.9, 1.0, t));
+                gl_FragColor = vec4(uColor * stripe, alpha);
+            }
+        `;
+
+        const planetsConfig = [
+            { size: 0.55, orbit: 10.5, speed: 0.0055, tilt: 0.16, spin: 0.012,
+              texture: makeRockyPlanetTexture('#8a4a3a', '#e0895c'), rimColor: 0xff9a66 },
+            { size: 0.4, orbit: 12.8, speed: 0.0042, tilt: -0.1, spin: 0.014,
+              texture: makeRockyPlanetTexture('#2a5a8a', '#7fc4ff'), rimColor: 0x7fd0ff },
+            { size: 1.0, orbit: 16.5, speed: 0.0026, tilt: 0.06, spin: 0.02,
+              texture: makeBandedPlanetTexture(['#dcc192', '#c8a06e', '#eed8ae', '#b8905c']), rimColor: 0xffe0ac, ring: true },
+            { size: 0.5, orbit: 20, speed: 0.002, tilt: 0.22, spin: 0.009,
+              texture: makeRockyPlanetTexture('#2a6a52', '#63e0ae'), rimColor: 0x74f0c4 },
+            { size: 0.22, orbit: 23, speed: 0.0016, tilt: -0.12, spin: 0.016,
+              texture: makeRockyPlanetTexture('#7d7d7d', '#c2c2c2'), rimColor: 0xd6d6d6 }
+        ];
+
+        const planets = [];
+        planetsConfig.forEach((cfg) => {
+            const mat = new THREE.MeshStandardMaterial({ map: cfg.texture, roughness: 0.9, metalness: 0.04 });
+            const mesh = new THREE.Mesh(new THREE.SphereGeometry(cfg.size, 32, 32), mat);
+            scene.add(mesh);
+
+            const planetRim = new THREE.Mesh(
+                new THREE.SphereGeometry(cfg.size * 1.16, 24, 24),
+                new THREE.MeshBasicMaterial({
+                    color: cfg.rimColor, transparent: true, opacity: 0.28,
+                    side: THREE.BackSide, blending: THREE.AdditiveBlending, depthWrite: false
+                })
+            );
+            mesh.add(planetRim);
+
+            if (cfg.ring) {
+                const ringMat = new THREE.ShaderMaterial({
+                    uniforms: {
+                        uColor: { value: new THREE.Color(cfg.rimColor) },
+                        uInner: { value: cfg.size * 1.4 },
+                        uOuter: { value: cfg.size * 2.3 }
+                    },
+                    vertexShader: diskVertex,
+                    fragmentShader: ringFragment,
+                    transparent: true,
+                    side: THREE.DoubleSide,
+                    depthWrite: false
+                });
+                const ring = new THREE.Mesh(new THREE.RingGeometry(cfg.size * 1.4, cfg.size * 2.3, 96, 4), ringMat);
+                ring.rotation.x = Math.PI / 2.3;
+                mesh.add(ring);
+            }
+
+            planets.push({
+                mesh: mesh,
+                orbit: cfg.orbit,
+                speed: cfg.speed,
+                angle: Math.random() * Math.PI * 2,
+                tilt: cfg.tilt,
+                spin: cfg.spin
+            });
+        });
+
         // ---------- Orbiting sparkle particles within the disk ----------
         const particleCount = 1100;
         const particleGeo = new THREE.BufferGeometry();
@@ -561,6 +683,15 @@ components.html(
             posAttr.needsUpdate = true;
 
             glowSprite.scale.setScalar(10 + Math.sin(t * 0.6) * 0.35);
+
+            planets.forEach((p) => {
+                p.angle += p.speed;
+                const x = p.orbit * Math.cos(p.angle);
+                const z = p.orbit * Math.sin(p.angle);
+                const y = Math.sin(p.angle * 0.5) * p.orbit * Math.sin(p.tilt);
+                p.mesh.position.set(x, y, z);
+                p.mesh.rotation.y += p.spin;
+            });
 
             if (autoRotate) {
                 targetTheta += 0.0012;
