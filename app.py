@@ -42,6 +42,7 @@ components.html(
             background: #000000;
             cursor: grab;
         }
+        #bh-canvas.hoverable { cursor: pointer; }
         #bh-canvas:active { cursor: grabbing; }
 
         .glass-panel {
@@ -133,7 +134,100 @@ components.html(
             font-weight: 400;
             font-size: 0.92rem;
             line-height: 1.4;
-            margin: 0;
+            margin: 0 0 10px 0;
+        }
+        .info-stats {
+            display: flex;
+            gap: 16px;
+            margin-top: 4px;
+        }
+        .info-stat {
+            display: flex;
+            flex-direction: column;
+        }
+        .info-stat-label {
+            color: rgba(170, 200, 255, 0.55);
+            font-family: -apple-system, sans-serif;
+            font-size: 0.62rem;
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+        }
+        .info-stat-value {
+            color: #eaf4ff;
+            font-family: -apple-system, sans-serif;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+        .info-close {
+            position: absolute;
+            top: 10px;
+            right: 14px;
+            color: rgba(255,255,255,0.45);
+            font-family: -apple-system, sans-serif;
+            font-size: 0.75rem;
+            cursor: pointer;
+            pointer-events: auto;
+            letter-spacing: 1px;
+        }
+        .info-close:hover { color: rgba(255,255,255,0.85); }
+
+        /* Floating hover tooltip that follows the cursor */
+        .hover-tip {
+            position: fixed;
+            z-index: 4;
+            padding: 6px 12px;
+            font-family: 'SF Pro Display', -apple-system, sans-serif;
+            font-weight: 600;
+            font-size: 0.82rem;
+            letter-spacing: 0.5px;
+            color: #eaf4ff;
+            background: rgba(10, 18, 36, 0.55);
+            border: 1px solid rgba(140, 190, 255, 0.35);
+            border-radius: 8px;
+            backdrop-filter: blur(6px);
+            pointer-events: none;
+            opacity: 0;
+            transform: translate(-50%, -140%) scale(0.92);
+            transition: opacity 0.15s ease, transform 0.15s ease;
+            white-space: nowrap;
+        }
+        .hover-tip.visible { opacity: 1; transform: translate(-50%, -160%) scale(1); }
+
+        /* Small legend of clickable worlds, bottom-right */
+        .legend {
+            position: fixed;
+            right: 3vw;
+            bottom: 6vh;
+            z-index: 2;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            font-family: -apple-system, sans-serif;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 5px 10px;
+            border-radius: 20px;
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(255,255,255,0.08);
+            color: rgba(220, 232, 255, 0.65);
+            font-size: 0.72rem;
+            letter-spacing: 0.5px;
+            cursor: pointer;
+            transition: background 0.2s ease, color 0.2s ease, transform 0.2s ease;
+        }
+        .legend-item:hover, .legend-item.active {
+            background: rgba(120, 175, 255, 0.16);
+            color: #ffffff;
+            transform: translateX(-3px);
+        }
+        .legend-dot {
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            box-shadow: 0 0 8px currentColor;
         }
     </style>
 
@@ -144,12 +238,31 @@ components.html(
         <div class="orion-text-sub">Event Horizon Interface</div>
     </div>
 
-    <div class="hint" id="hint">drag to orbit &nbsp;•&nbsp; scroll to zoom &nbsp;•&nbsp; click a world to explore</div>
+    <div class="hint" id="hint">drag to orbit &nbsp;•&nbsp; scroll to zoom &nbsp;•&nbsp; hover or click a world to explore</div>
 
     <div class="glass-panel info-panel" id="info-panel">
+        <div class="info-close" id="info-close">CLOSE ✕</div>
         <p class="info-name" id="info-name">—</p>
         <p class="info-desc" id="info-desc">—</p>
+        <div class="info-stats">
+            <div class="info-stat">
+                <span class="info-stat-label">Orbit</span>
+                <span class="info-stat-value" id="info-orbit">—</span>
+            </div>
+            <div class="info-stat">
+                <span class="info-stat-label">Relative Size</span>
+                <span class="info-stat-value" id="info-size">—</span>
+            </div>
+            <div class="info-stat">
+                <span class="info-stat-label">Class</span>
+                <span class="info-stat-value" id="info-class">—</span>
+            </div>
+        </div>
     </div>
+
+    <div class="hover-tip" id="hover-tip">—</div>
+
+    <div class="legend" id="legend"></div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script>
@@ -159,6 +272,12 @@ components.html(
         const infoPanel = document.getElementById('info-panel');
         const infoName = document.getElementById('info-name');
         const infoDesc = document.getElementById('info-desc');
+        const infoOrbit = document.getElementById('info-orbit');
+        const infoSize = document.getElementById('info-size');
+        const infoClass = document.getElementById('info-class');
+        const infoClose = document.getElementById('info-close');
+        const hoverTip = document.getElementById('hover-tip');
+        const legendEl = document.getElementById('legend');
 
         const renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, alpha: false });
         const pixelRatio = Math.min(window.devicePixelRatio, 2);
@@ -194,6 +313,8 @@ components.html(
         const orbitCenter = new THREE.Vector3(0, 0, 0);
         const targetCenter = new THREE.Vector3(0, 0, 0);
         let focusedPlanet = null;
+        let hoveredEntry = null;
+        let lastPointerX = 0, lastPointerY = 0;
 
         let parallaxX = 0, parallaxY = 0, parallaxTargetX = 0, parallaxTargetY = 0;
 
@@ -238,6 +359,12 @@ components.html(
             const ny = (e.clientY / window.innerHeight) * 2 - 1;
             parallaxTargetX = nx * 0.18;
             parallaxTargetY = ny * 0.1;
+            lastPointerX = e.clientX;
+            lastPointerY = e.clientY;
+
+            if (!isDragging) {
+                updateHover(e.clientX, e.clientY);
+            }
 
             if (!isDragging) return;
             dragMoved = true;
@@ -254,7 +381,7 @@ components.html(
             targetRadius = Math.max(2.5, Math.min(30, targetRadius));
         }, { passive: false });
 
-        // ================= RAYCAST CLICK: focus planets, pulse the hole =================
+        // ================= RAYCAST: hover + click, focus planets, pulse the hole =================
         const raycaster = new THREE.Raycaster();
         const ndc = new THREE.Vector2();
         const meshToPlanet = new Map();
@@ -262,13 +389,52 @@ components.html(
         let pulseStart = -999;
         function triggerPulse() { pulseStart = clock.getElapsedTime(); }
 
+        function updateHover(clientX, clientY) {
+            const rect = canvas.getBoundingClientRect();
+            ndc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+            ndc.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+            raycaster.setFromCamera(ndc, camera);
+
+            const planetMeshes = planets.map((p) => p.mesh);
+            const hits = raycaster.intersectObjects(planetMeshes, true);
+
+            let entry = null;
+            if (hits.length > 0) {
+                let obj = hits[0].object;
+                while (obj && !meshToPlanet.has(obj)) obj = obj.parent;
+                if (obj) entry = meshToPlanet.get(obj);
+            }
+
+            if (entry !== hoveredEntry) {
+                hoveredEntry = entry;
+                canvas.classList.toggle('hoverable', !!entry);
+                if (entry) {
+                    hoverTip.textContent = entry.cfg.name;
+                    hoverTip.classList.add('visible');
+                    setActiveLegend(entry.cfg.name);
+                } else {
+                    hoverTip.classList.remove('visible');
+                    setActiveLegend(focusedPlanet ? focusedPlanet.cfgName : null);
+                }
+            }
+            if (entry) {
+                hoverTip.style.left = clientX + 'px';
+                hoverTip.style.top = clientY + 'px';
+            }
+        }
+
         function focusPlanet(planet, cfg) {
             focusedPlanet = planet;
+            focusedPlanet.cfgName = cfg.name;
             targetRadius = Math.max(2.2, cfg.size * 7.5);
             infoName.textContent = cfg.name;
             infoDesc.textContent = cfg.desc;
+            infoOrbit.textContent = cfg.orbit.toFixed(1) + ' AU';
+            infoSize.textContent = cfg.size.toFixed(2) + 'x';
+            infoClass.textContent = cfg.klass;
             infoPanel.classList.add('visible');
             hintEl.style.opacity = '0';
+            setActiveLegend(cfg.name);
             spawnPing(planet.mesh.position, cfg.rimColor);
         }
 
@@ -277,7 +443,9 @@ components.html(
             targetRadius = 13;
             infoPanel.classList.remove('visible');
             hintEl.style.opacity = '1';
+            setActiveLegend(null);
         }
+        infoClose.addEventListener('click', defocus);
 
         function handleClick(e) {
             const rect = canvas.getBoundingClientRect();
@@ -582,51 +750,187 @@ components.html(
         diskLight.position.set(0, 0, 0);
         scene.add(diskLight);
 
-        // ================= PLANETS: textured, lit, named, clickable =================
-        function makeRockyPlanetTexture(baseColor, accentColor) {
-            const w = 512, h = 256;
-            const c = document.createElement('canvas');
-            c.width = w; c.height = h;
-            const ctx = c.getContext('2d');
-            ctx.fillStyle = baseColor;
-            ctx.fillRect(0, 0, w, h);
-            for (let i = 0; i < 300; i++) {
-                const x = Math.random() * w;
-                const y = Math.random() * h;
-                const r = 2 + Math.random() * 12;
-                ctx.fillStyle = accentColor;
-                ctx.globalAlpha = 0.1 + Math.random() * 0.2;
-                ctx.beginPath();
-                ctx.arc(x, y, r, 0, Math.PI * 2);
-                ctx.fill();
+        // ================= ORBIT PATH RINGS (faint guide trails) =================
+        function makeOrbitRing(orbitRadius, color) {
+            const points = [];
+            const segments = 128;
+            for (let i = 0; i <= segments; i++) {
+                const a = (i / segments) * Math.PI * 2;
+                points.push(new THREE.Vector3(orbitRadius * Math.cos(a), 0, orbitRadius * Math.sin(a)));
             }
-            ctx.globalAlpha = 1.0;
-            return new THREE.CanvasTexture(c);
+            const geo = new THREE.BufferGeometry().setFromPoints(points);
+            const mat = new THREE.LineBasicMaterial({
+                color: color, transparent: true, opacity: 0.14
+            });
+            return new THREE.LineLoop(geo, mat);
         }
 
-        function makeBandedPlanetTexture(colors) {
-            const w = 512, h = 256;
-            const c = document.createElement('canvas');
-            c.width = w; c.height = h;
-            const ctx = c.getContext('2d');
-            const bands = 12;
-            for (let i = 0; i < bands; i++) {
-                ctx.fillStyle = colors[i % colors.length];
-                const y0 = (h / bands) * i;
-                ctx.fillRect(0, y0, w, h / bands + 2);
+        // ================= REALISTIC PLANET TEXTURE GENERATORS =================
+        // Terrain world: oceans, continents, polar caps, and a soft cloud layer.
+        function makeTerrainPlanet(oceanColor, landColor, mountainColor, iceColor) {
+            const w = 1024, h = 512;
+            const mapC = document.createElement('canvas'); mapC.width = w; mapC.height = h;
+            const bumpC = document.createElement('canvas'); bumpC.width = w; bumpC.height = h;
+            const mctx = mapC.getContext('2d');
+            const bctx = bumpC.getContext('2d');
+
+            mctx.fillStyle = oceanColor; mctx.fillRect(0, 0, w, h);
+            bctx.fillStyle = '#808080'; bctx.fillRect(0, 0, w, h);
+
+            const continents = 7 + Math.floor(Math.random() * 4);
+            for (let i = 0; i < continents; i++) {
+                const cx = Math.random() * w;
+                const cy = h * 0.18 + Math.random() * h * 0.64;
+                const blobs = 16 + Math.floor(Math.random() * 12);
+                mctx.fillStyle = landColor;
+                bctx.fillStyle = '#b4b4b4';
+                for (let j = 0; j < blobs; j++) {
+                    const ang = Math.random() * Math.PI * 2;
+                    const dist = Math.random() * 75;
+                    const bx = cx + Math.cos(ang) * dist;
+                    const by = cy + Math.sin(ang) * dist * 0.6;
+                    const r = 16 + Math.random() * 36;
+                    mctx.beginPath(); mctx.arc(bx, by, r, 0, Math.PI * 2); mctx.fill();
+                    bctx.beginPath(); bctx.arc(bx, by, r, 0, Math.PI * 2); bctx.fill();
+                }
             }
-            ctx.globalAlpha = 0.18;
+
+            for (let i = 0; i < 550; i++) {
+                const x = Math.random() * w, y = Math.random() * h;
+                const r = 1 + Math.random() * 4;
+                mctx.globalAlpha = 0.06 + Math.random() * 0.12;
+                mctx.fillStyle = mountainColor;
+                mctx.beginPath(); mctx.arc(x, y, r, 0, Math.PI * 2); mctx.fill();
+                bctx.globalAlpha = 0.15 + Math.random() * 0.2;
+                bctx.fillStyle = Math.random() < 0.5 ? '#e2e2e2' : '#3c3c3c';
+                bctx.beginPath(); bctx.arc(x, y, r * 1.6, 0, Math.PI * 2); bctx.fill();
+            }
+            mctx.globalAlpha = 1; bctx.globalAlpha = 1;
+
+            const capTop = mctx.createLinearGradient(0, 0, 0, h * 0.12);
+            capTop.addColorStop(0, iceColor); capTop.addColorStop(1, 'rgba(255,255,255,0)');
+            mctx.fillStyle = capTop; mctx.fillRect(0, 0, w, h * 0.12);
+            const capBot = mctx.createLinearGradient(0, h, 0, h * 0.88);
+            capBot.addColorStop(0, iceColor); capBot.addColorStop(1, 'rgba(255,255,255,0)');
+            mctx.fillStyle = capBot; mctx.fillRect(0, h * 0.88, w, h * 0.12);
+
+            const cloudC = document.createElement('canvas'); cloudC.width = w; cloudC.height = h;
+            const cctx = cloudC.getContext('2d');
             for (let i = 0; i < 45; i++) {
-                ctx.strokeStyle = '#ffffff';
-                ctx.lineWidth = 1 + Math.random() * 2;
-                ctx.beginPath();
-                const y = Math.random() * h;
-                ctx.moveTo(0, y);
-                ctx.bezierCurveTo(w * 0.3, y + (Math.random() - 0.5) * 20, w * 0.7, y + (Math.random() - 0.5) * 20, w, y + (Math.random() - 0.5) * 10);
-                ctx.stroke();
+                const x = Math.random() * w, y = Math.random() * h;
+                const r = 35 + Math.random() * 85;
+                const g = cctx.createRadialGradient(x, y, 0, x, y, r);
+                g.addColorStop(0, 'rgba(255,255,255,0.55)');
+                g.addColorStop(1, 'rgba(255,255,255,0)');
+                cctx.fillStyle = g;
+                cctx.beginPath();
+                cctx.ellipse(x, y, r, r * 0.5, Math.random() * Math.PI, 0, Math.PI * 2);
+                cctx.fill();
             }
-            ctx.globalAlpha = 1.0;
-            return new THREE.CanvasTexture(c);
+
+            const mapTex = new THREE.CanvasTexture(mapC);
+            const bumpTex = new THREE.CanvasTexture(bumpC);
+            const cloudTex = new THREE.CanvasTexture(cloudC);
+            mapTex.anisotropy = 4; mapTex.needsUpdate = true;
+            bumpTex.needsUpdate = true; cloudTex.needsUpdate = true;
+            return { map: mapTex, bump: bumpTex, clouds: cloudTex };
+        }
+
+        // Cratered world: rocky/icy body pocked with impact craters.
+        function makeCraterPlanet(baseColor, accentColor, craterCount) {
+            const w = 1024, h = 512;
+            const mapC = document.createElement('canvas'); mapC.width = w; mapC.height = h;
+            const bumpC = document.createElement('canvas'); bumpC.width = w; bumpC.height = h;
+            const mctx = mapC.getContext('2d');
+            const bctx = bumpC.getContext('2d');
+
+            mctx.fillStyle = baseColor; mctx.fillRect(0, 0, w, h);
+            bctx.fillStyle = '#808080'; bctx.fillRect(0, 0, w, h);
+
+            for (let i = 0; i < 650; i++) {
+                const x = Math.random() * w, y = Math.random() * h;
+                mctx.globalAlpha = 0.05 + Math.random() * 0.14;
+                mctx.fillStyle = accentColor;
+                const r = 2 + Math.random() * 10;
+                mctx.beginPath(); mctx.arc(x, y, r, 0, Math.PI * 2); mctx.fill();
+            }
+            mctx.globalAlpha = 1;
+
+            for (let i = 0; i < craterCount; i++) {
+                const x = Math.random() * w, y = Math.random() * h;
+                const r = 4 + Math.random() * 24;
+
+                const mg = mctx.createRadialGradient(x, y, 0, x, y, r);
+                mg.addColorStop(0, 'rgba(0,0,0,0.28)');
+                mg.addColorStop(0.75, 'rgba(0,0,0,0.12)');
+                mg.addColorStop(0.85, 'rgba(255,255,255,0.16)');
+                mg.addColorStop(1, 'rgba(0,0,0,0)');
+                mctx.fillStyle = mg;
+                mctx.beginPath(); mctx.arc(x, y, r, 0, Math.PI * 2); mctx.fill();
+
+                const bg = bctx.createRadialGradient(x, y, 0, x, y, r);
+                bg.addColorStop(0, 'rgba(55,55,55,1)');
+                bg.addColorStop(0.7, 'rgba(95,95,95,1)');
+                bg.addColorStop(0.85, 'rgba(225,225,225,1)');
+                bg.addColorStop(1, 'rgba(128,128,128,0)');
+                bctx.fillStyle = bg;
+                bctx.beginPath(); bctx.arc(x, y, r, 0, Math.PI * 2); bctx.fill();
+            }
+
+            const mapTex = new THREE.CanvasTexture(mapC);
+            const bumpTex = new THREE.CanvasTexture(bumpC);
+            mapTex.anisotropy = 4; mapTex.needsUpdate = true; bumpTex.needsUpdate = true;
+            return { map: mapTex, bump: bumpTex, clouds: null };
+        }
+
+        // Gas giant: banded atmosphere with a great storm.
+        function makeGasGiantPlanet(colors, stormColor) {
+            const w = 1024, h = 512;
+            const mapC = document.createElement('canvas'); mapC.width = w; mapC.height = h;
+            const bumpC = document.createElement('canvas'); bumpC.width = w; bumpC.height = h;
+            const mctx = mapC.getContext('2d');
+            const bctx = bumpC.getContext('2d');
+
+            const bands = 14;
+            for (let i = 0; i < bands; i++) {
+                mctx.fillStyle = colors[i % colors.length];
+                const y0 = (h / bands) * i;
+                mctx.fillRect(0, y0, w, h / bands + 2);
+            }
+            bctx.fillStyle = '#808080'; bctx.fillRect(0, 0, w, h);
+
+            mctx.globalAlpha = 0.16;
+            for (let i = 0; i < 75; i++) {
+                mctx.strokeStyle = '#ffffff';
+                mctx.lineWidth = 1 + Math.random() * 2;
+                mctx.beginPath();
+                const y = Math.random() * h;
+                mctx.moveTo(0, y);
+                mctx.bezierCurveTo(w * 0.3, y + (Math.random() - 0.5) * 22, w * 0.7, y + (Math.random() - 0.5) * 22, w, y + (Math.random() - 0.5) * 12);
+                mctx.stroke();
+            }
+            mctx.globalAlpha = 1;
+
+            const sx = w * (0.25 + Math.random() * 0.5), sy = h * (0.35 + Math.random() * 0.3);
+            const sw = 75 + Math.random() * 40, sh = sw * 0.6;
+            const sg = mctx.createRadialGradient(sx, sy, 0, sx, sy, sw);
+            sg.addColorStop(0, stormColor);
+            sg.addColorStop(1, 'rgba(0,0,0,0)');
+            mctx.fillStyle = sg;
+            mctx.beginPath(); mctx.ellipse(sx, sy, sw, sh, 0, 0, Math.PI * 2); mctx.fill();
+
+            for (let i = 0; i < 320; i++) {
+                const x = Math.random() * w, y = Math.random() * h;
+                bctx.globalAlpha = 0.08 + Math.random() * 0.1;
+                bctx.fillStyle = Math.random() < 0.5 ? '#a2a2a2' : '#5c5c5c';
+                bctx.beginPath(); bctx.arc(x, y, 3 + Math.random() * 6, 0, Math.PI * 2); bctx.fill();
+            }
+            bctx.globalAlpha = 1;
+
+            const mapTex = new THREE.CanvasTexture(mapC);
+            const bumpTex = new THREE.CanvasTexture(bumpC);
+            mapTex.anisotropy = 4; mapTex.needsUpdate = true; bumpTex.needsUpdate = true;
+            return { map: mapTex, bump: bumpTex, clouds: null };
         }
 
         const ringFragment = `
@@ -642,29 +946,55 @@ components.html(
             }
         `;
 
+        // Each world now carries a `klass` label, its own texture recipe, an
+        // optional cloud layer, optional rings, and an optional moon.
         const planetsConfig = [
             { name: 'Ember', desc: 'A scorched wanderer, forever circling too close to the light.',
-              size: 0.55, orbit: 10.5, speed: 0.0055, tilt: 0.16, spin: 0.012,
-              texture: makeRockyPlanetTexture('#8a4a3a', '#e0895c'), rimColor: 0xff9a66 },
+              klass: 'Molten Rock', size: 0.55, orbit: 10.5, speed: 0.0055, tilt: 0.16, spin: 0.012,
+              kind: 'crater', textureArgs: ['#8a4a3a', '#e0a06a', 420], rimColor: 0xff9a66 },
             { name: 'Azure', desc: 'Frozen oceans beneath a frostbitten, silent sky.',
-              size: 0.4, orbit: 12.8, speed: 0.0042, tilt: -0.1, spin: 0.014,
-              texture: makeRockyPlanetTexture('#2a5a8a', '#7fc4ff'), rimColor: 0x7fd0ff },
+              klass: 'Ocean World', size: 0.42, orbit: 12.8, speed: 0.0042, tilt: -0.1, spin: 0.014,
+              kind: 'terrain', textureArgs: ['#2a5a8a', '#bcd9ff', '#dceeff', 'rgba(255,255,255,0.92)'], rimColor: 0x7fd0ff, moon: true },
             { name: 'Helios', desc: 'A giant crowned in stardust rings, drifting on ancient winds.',
-              size: 1.0, orbit: 16.5, speed: 0.0026, tilt: 0.06, spin: 0.02,
-              texture: makeBandedPlanetTexture(['#dcc192', '#c8a06e', '#eed8ae', '#b8905c']), rimColor: 0xffe0ac, ring: true },
+              klass: 'Gas Giant', size: 1.0, orbit: 16.5, speed: 0.0026, tilt: 0.06, spin: 0.02,
+              kind: 'gas', textureArgs: [['#dcc192', '#c8a06e', '#eed8ae', '#b8905c'], 'rgba(255,207,138,0.8)'], rimColor: 0xffe0ac, ring: true },
             { name: 'Verdant', desc: 'A world humming with borrowed light, teeming with quiet color.',
-              size: 0.5, orbit: 20, speed: 0.002, tilt: 0.22, spin: 0.009,
-              texture: makeRockyPlanetTexture('#2a6a52', '#63e0ae'), rimColor: 0x74f0c4 },
+              klass: 'Living World', size: 0.5, orbit: 20, speed: 0.002, tilt: 0.22, spin: 0.009,
+              kind: 'terrain', textureArgs: ['#1c4f63', '#4fae7c', '#8fe0a8', 'rgba(255,255,255,0.85)'], rimColor: 0x74f0c4 },
             { name: 'Luna', desc: 'The quiet one, drifting at the edge of the dark.',
-              size: 0.22, orbit: 23, speed: 0.0016, tilt: -0.12, spin: 0.016,
-              texture: makeRockyPlanetTexture('#7d7d7d', '#c2c2c2'), rimColor: 0xd6d6d6 }
+              klass: 'Dead Moon', size: 0.22, orbit: 23, speed: 0.0016, tilt: -0.12, spin: 0.016,
+              kind: 'crater', textureArgs: ['#7d7d7d', '#c2c2c2', 520], rimColor: 0xd6d6d6 }
         ];
 
         const planets = [];
         planetsConfig.forEach((cfg) => {
-            const mat = new THREE.MeshStandardMaterial({ map: cfg.texture, roughness: 0.9, metalness: 0.04 });
-            const mesh = new THREE.Mesh(new THREE.SphereGeometry(cfg.size, 32, 32), mat);
+            let tex;
+            if (cfg.kind === 'terrain') tex = makeTerrainPlanet(...cfg.textureArgs);
+            else if (cfg.kind === 'gas') tex = makeGasGiantPlanet(...cfg.textureArgs);
+            else tex = makeCraterPlanet(...cfg.textureArgs);
+
+            const mat = new THREE.MeshStandardMaterial({
+                map: tex.map,
+                bumpMap: tex.bump,
+                bumpScale: 0.035,
+                roughness: cfg.kind === 'gas' ? 0.55 : 0.92,
+                metalness: 0.04,
+                emissive: new THREE.Color(cfg.rimColor),
+                emissiveIntensity: 0.0
+            });
+            const mesh = new THREE.Mesh(new THREE.SphereGeometry(cfg.size, 48, 48), mat);
+            mesh.rotation.z = cfg.tilt;
             scene.add(mesh);
+
+            // soft drifting cloud layer for terrain worlds
+            if (tex.clouds) {
+                const cloudMat = new THREE.MeshBasicMaterial({
+                    map: tex.clouds, transparent: true, opacity: 0.85, depthWrite: false
+                });
+                const cloudMesh = new THREE.Mesh(new THREE.SphereGeometry(cfg.size * 1.015, 48, 48), cloudMat);
+                mesh.add(cloudMesh);
+                mesh.userData.cloudMesh = cloudMesh;
+            }
 
             const planetRim = new THREE.Mesh(
                 new THREE.SphereGeometry(cfg.size * 1.16, 24, 24),
@@ -674,6 +1004,7 @@ components.html(
                 })
             );
             mesh.add(planetRim);
+            mesh.userData.rimMesh = planetRim;
 
             if (cfg.ring) {
                 const ringMat = new THREE.ShaderMaterial({
@@ -693,17 +1024,53 @@ components.html(
                 mesh.add(ringMesh);
             }
 
+            // a small companion moon for extra visual interest / interactivity
+            let moonMesh = null, moonAngle = 0;
+            if (cfg.moon) {
+                const moonTex = makeCraterPlanet('#9a9a9a', '#d5d5d5', 180);
+                const moonMat = new THREE.MeshStandardMaterial({
+                    map: moonTex.map, bumpMap: moonTex.bump, bumpScale: 0.02, roughness: 0.95
+                });
+                moonMesh = new THREE.Mesh(new THREE.SphereGeometry(cfg.size * 0.28, 24, 24), moonMat);
+                mesh.add(moonMesh);
+            }
+
+            // faint guide ring showing this planet's orbital path
+            const orbitLine = makeOrbitRing(cfg.orbit, cfg.rimColor);
+            scene.add(orbitLine);
+
             const planetEntry = {
                 mesh: mesh,
                 orbit: cfg.orbit,
                 speed: cfg.speed,
                 angle: Math.random() * Math.PI * 2,
                 tilt: cfg.tilt,
-                spin: cfg.spin
+                spin: cfg.spin,
+                baseScale: 1,
+                moonMesh: moonMesh,
+                moonAngle: Math.random() * Math.PI * 2
             };
             planets.push(planetEntry);
             meshToPlanet.set(mesh, { planet: planetEntry, cfg: cfg });
+
+            // legend entry so users can also jump to a world without hunting for it
+            const item = document.createElement('div');
+            item.className = 'legend-item';
+            item.dataset.name = cfg.name;
+            item.innerHTML = '<span class="legend-dot" style="color:#' + cfg.rimColor.toString(16).padStart(6, '0') + '"></span>' + cfg.name;
+            item.addEventListener('click', () => {
+                focusPlanet(planetEntry, cfg);
+                triggerPulse();
+            });
+            item.addEventListener('mouseenter', () => setActiveLegend(cfg.name));
+            item.addEventListener('mouseleave', () => setActiveLegend(focusedPlanet ? focusedPlanet.cfgName : null));
+            legendEl.appendChild(item);
         });
+
+        function setActiveLegend(name) {
+            const items = legendEl.querySelectorAll('.legend-item');
+            items.forEach((it) => it.classList.toggle('active', it.dataset.name === name));
+        }
 
         // ================= "PING" - a quick expanding ring shown on interaction =================
         const pings = [];
@@ -902,6 +1269,34 @@ components.html(
                 const y = Math.sin(p.angle * 0.5) * p.orbit * Math.sin(p.tilt);
                 p.mesh.position.set(x, y, z);
                 p.mesh.rotation.y += p.spin;
+
+                if (p.mesh.userData.cloudMesh) {
+                    p.mesh.userData.cloudMesh.rotation.y += p.spin * 0.4;
+                }
+
+                // gentle interactive feedback: glow + slight scale-up on hover/focus
+                const entry = meshToPlanet.get(p.mesh);
+                const isHovered = hoveredEntry && hoveredEntry.planet === p;
+                const isFocused = focusedPlanet === p;
+                const targetEmissive = (isHovered || isFocused) ? (isFocused ? 0.55 : 0.32) : 0.0;
+                const targetScale = (isHovered || isFocused) ? 1.12 : 1.0;
+                p.mesh.material.emissiveIntensity += (targetEmissive - p.mesh.material.emissiveIntensity) * 0.12;
+                p.baseScale += (targetScale - p.baseScale) * 0.12;
+                p.mesh.scale.setScalar(p.baseScale);
+                if (p.mesh.userData.rimMesh) {
+                    p.mesh.userData.rimMesh.material.opacity = 0.28 + (isHovered || isFocused ? 0.35 : 0) * (0.7 + 0.3 * Math.sin(t * 3));
+                }
+
+                if (p.moonMesh) {
+                    p.moonAngle += p.speed * 6.0;
+                    const moonOrbitR = p.mesh.geometry.parameters.radius * 2.6;
+                    p.moonMesh.position.set(
+                        moonOrbitR * Math.cos(p.moonAngle),
+                        Math.sin(p.moonAngle * 1.7) * 0.15,
+                        moonOrbitR * Math.sin(p.moonAngle)
+                    );
+                    p.moonMesh.rotation.y += 0.01;
+                }
             });
 
             for (let i = pings.length - 1; i >= 0; i--) {
