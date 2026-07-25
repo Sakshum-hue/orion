@@ -174,8 +174,112 @@ components.html(
             targetRadius = Math.max(6, Math.min(28, targetRadius));
         }, { passive: false });
 
-        // ---------- Starfield (dense, layered for parallax depth) ----------
-        function makeStarfield(count, minR, maxR, size, opacity) {
+        // ---------- High-resolution deep-space skybox (nebula + stars, painted procedurally) ----------
+        function makeSpaceSkyboxTexture() {
+            const w = 4096, h = 2048;
+            const c = document.createElement('canvas');
+            c.width = w; c.height = h;
+            const ctx = c.getContext('2d');
+
+            // Deep space base gradient (near-black with a faint navy tone)
+            const base = ctx.createLinearGradient(0, 0, 0, h);
+            base.addColorStop(0, '#02030a');
+            base.addColorStop(0.5, '#04050f');
+            base.addColorStop(1, '#020208');
+            ctx.fillStyle = base;
+            ctx.fillRect(0, 0, w, h);
+
+            // Soft nebula clouds in blues/violets/teals, all matching the theme
+            const nebulaColors = [
+                'rgba(70, 110, 220, 0.10)',
+                'rgba(40, 160, 210, 0.09)',
+                'rgba(110, 80, 210, 0.08)',
+                'rgba(20, 60, 140, 0.12)'
+            ];
+            for (let i = 0; i < 26; i++) {
+                const x = Math.random() * w;
+                const y = Math.random() * h;
+                const r = 150 + Math.random() * 420;
+                const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+                const color = nebulaColors[i % nebulaColors.length];
+                g.addColorStop(0, color);
+                g.addColorStop(1, 'rgba(0,0,0,0)');
+                ctx.fillStyle = g;
+                ctx.beginPath();
+                ctx.ellipse(x, y, r, r * (0.4 + Math.random() * 0.5), Math.random() * Math.PI, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // Faint wispy dust lanes
+            ctx.globalAlpha = 0.05;
+            for (let i = 0; i < 6; i++) {
+                ctx.strokeStyle = 'rgba(150,180,255,0.5)';
+                ctx.lineWidth = 40 + Math.random() * 80;
+                ctx.beginPath();
+                const sy = Math.random() * h;
+                ctx.moveTo(0, sy);
+                ctx.bezierCurveTo(w*0.3, sy + (Math.random()-0.5)*300, w*0.7, sy + (Math.random()-0.5)*300, w, sy + (Math.random()-0.5)*200);
+                ctx.stroke();
+            }
+            ctx.globalAlpha = 1.0;
+
+            // Background stars: many tiny faint dots
+            for (let i = 0; i < 9000; i++) {
+                const x = Math.random() * w;
+                const y = Math.random() * h;
+                const b = Math.random();
+                const size = b < 0.85 ? 0.7 : (b < 0.97 ? 1.3 : 2.0);
+                const alpha = 0.25 + Math.random() * 0.55;
+                // subtle warm/cool tint variety, mostly white-blue like real star photography
+                const tint = Math.random();
+                let color;
+                if (tint < 0.7) color = `rgba(255,255,255,${alpha})`;
+                else if (tint < 0.9) color = `rgba(190,215,255,${alpha})`;
+                else color = `rgba(255,235,210,${alpha})`;
+                ctx.fillStyle = color;
+                ctx.beginPath();
+                ctx.arc(x, y, size, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // Foreground hero stars with soft glow + subtle cross flare
+            for (let i = 0; i < 55; i++) {
+                const x = Math.random() * w;
+                const y = Math.random() * h;
+                const r = 3 + Math.random() * 5;
+                const glow = ctx.createRadialGradient(x, y, 0, x, y, r * 6);
+                glow.addColorStop(0, 'rgba(255,255,255,0.9)');
+                glow.addColorStop(0.25, 'rgba(200,225,255,0.35)');
+                glow.addColorStop(1, 'rgba(200,225,255,0)');
+                ctx.fillStyle = glow;
+                ctx.beginPath();
+                ctx.arc(x, y, r * 6, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.fillStyle = 'rgba(255,255,255,0.95)';
+                ctx.beginPath();
+                ctx.arc(x, y, r, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.strokeStyle = 'rgba(220,235,255,0.35)';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(x - r * 5, y); ctx.lineTo(x + r * 5, y);
+                ctx.moveTo(x, y - r * 5); ctx.lineTo(x, y + r * 5);
+                ctx.stroke();
+            }
+
+            const texture = new THREE.CanvasTexture(c);
+            texture.mapping = THREE.EquirectangularReflectionMapping;
+            texture.magFilter = THREE.LinearFilter;
+            texture.minFilter = THREE.LinearMipmapLinearFilter;
+            texture.wrapS = THREE.RepeatWrapping;
+            return texture;
+        }
+        scene.background = makeSpaceSkyboxTexture();
+
+        // A handful of crisp foreground stars for subtle parallax as the camera orbits
+        function makeForegroundStars(count, minR, maxR) {
             const geo = new THREE.BufferGeometry();
             const pos = new Float32Array(count * 3);
             for (let i = 0; i < count; i++) {
@@ -188,13 +292,12 @@ components.html(
             }
             geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
             const mat = new THREE.PointsMaterial({
-                color: 0xffffff, size: size, sizeAttenuation: true,
-                transparent: true, opacity: opacity
+                color: 0xe8f2ff, size: 0.55, sizeAttenuation: true,
+                transparent: true, opacity: 0.75
             });
             return new THREE.Points(geo, mat);
         }
-        scene.add(makeStarfield(2600, 60, 160, 0.5, 0.7));
-        scene.add(makeStarfield(900, 160, 320, 1.0, 0.9));
+        scene.add(makeForegroundStars(500, 60, 150));
 
         // ---------- Soft blue glow halo (sprite from canvas gradient) ----------
         function makeGlowTexture() {
@@ -410,10 +513,6 @@ components.html(
                     warpedUV = clamp(warpedUV, vec2(0.001), vec2(0.999));
 
                     vec3 base = texture2D(tDiffuse, warpedUV).rgb;
-
-                    float ca = clamp(warp * 0.5, 0.0, 0.02);
-                    base.r = texture2D(tDiffuse, clamp(warpedUV + dirUv * ca, 0.001, 0.999)).r;
-                    base.b = texture2D(tDiffuse, clamp(warpedUV - dirUv * ca, 0.001, 0.999)).b;
 
                     vec3 bloom = sampleBloom(uv);
                     float brightness = dot(bloom, vec3(0.299, 0.587, 0.114));
