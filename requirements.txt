@@ -2,4 +2,5 @@ streamlit
 requests
 qrcode
 pillow
-google-generativeai
+google-genai
+groq
