@@ -1,63 +1,99 @@
-import os
 import streamlit as st
-import streamlit.components.v1 as components
+from google import genai
+from groq import Groq
 
-# --- 1. Page Configuration ---
+# 1. Page Configuration
 st.set_page_config(
     page_title="Orion AI Assistant",
     page_icon="🌌",
     layout="wide",
-    initial_sidebar_state="collapsed",
 )
 
-# --- 2. Custom CSS to clean up UI ---
-st.markdown("""
-    <style>
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    header {visibility: hidden;}
-    .block-container {padding-top: 1rem; padding-bottom: 1rem;}
-    </style>
-""", unsafe_allow_html=True)
+st.title("🌌 Orion AI Assistant")
 
-# --- 3. Load Custom 3D Component ---
-parent_dir = os.path.dirname(os.path.abspath(__file__))
-build_dir = os.path.join(parent_dir, "3d_components")
+# 2. Retrieve Secrets & Setup Fallback Streamer
+SYSTEM_PROMPT = (
+    "You are Orion, an advanced, intelligent, and articulate sci-fi AI assistant. "
+    "Provide clear, crisp, insightful answers with a touch of cosmic warmth."
+)
 
-planet_viewer = components.declare_component("planet_viewer", path=build_dir)
+groq_keys = st.secrets.get("GROQ_API_KEYS", [])
+gemini_keys = st.secrets.get("GEMINI_API_KEYS", [])
 
-# Render the 3D viewport iframe
-selected_world = planet_viewer(key="orion_3d", default=None)
+def generate_response_stream(messages_history):
+    """
+    Tries Groq keys first. If rate-limited or exhausted, 
+    falls back seamlessly to Gemini keys.
+    """
+    provider_pool = [("groq", k) for k in groq_keys] + [("gemini", k) for k in gemini_keys]
+    last_exception = None
 
-# --- 4. Update Active Location from 3D Viewport Clicks ---
-if selected_world:
-    st.session_state["active_world"] = selected_world.get("name")
-    st.session_state["world_type"] = selected_world.get("type")
+    for provider, key in provider_pool:
+        try:
+            if provider == "groq":
+                client = Groq(api_key=key)
+                formatted_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+                for msg in messages_history:
+                    formatted_messages.append({"role": msg["role"], "content": msg["content"]})
 
-current_world = st.session_state.get("active_world", "Event Horizon")
-st.caption(f"📍 **Current Location:** {current_world}")
+                completion = client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=formatted_messages,
+                    stream=True,
+                )
+                for chunk in completion:
+                    content = chunk.choices[0].delta.content
+                    if content:
+                        yield content
+                return  # Stream finished successfully!
 
-# --- 5. Streamlit Chat Interface ---
+            elif provider == "gemini":
+                client = genai.Client(api_key=key)
+                formatted_contents = [{"role": "user", "parts": [{"text": SYSTEM_PROMPT}]}]
+                for msg in messages_history:
+                    formatted_contents.append({
+                        "role": "user" if msg["role"] == "user" else "model",
+                        "parts": [{"text": msg["content"]}]
+                    })
+
+                response_stream = client.models.generate_content_stream(
+                    model="gemini-2.5-flash",
+                    contents=formatted_contents
+                )
+                for chunk in response_stream:
+                    if chunk.text:
+                        yield chunk.text
+                return  # Stream finished successfully!
+
+        except Exception as e:
+            last_exception = e
+            continue  # Silently skip failed key and try the next one
+
+    yield f"\n\n⚠️ **All API keys exhausted or rate-limited.** Details: `{last_exception}`"
+
+# 3. Streamlit Chat Session State
 if "messages" not in st.session_state:
-    st.session_state.messages = [
-        {"role": "assistant", "content": f"Greetings. I am Orion AI, stationed at **{current_world}**. How can I assist you today?"}
-    ]
+    st.session_state.messages = []
 
-# Render past chat messages
+# Display past messages
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# Chat input box
-if prompt := st.chat_input("Ask Orion AI..."):
-    # Append & display user message
-    st.session_state.messages.append({"role": "user", "content": prompt})
+# User Chat Input
+if user_input := st.chat_input("Ask Orion anything..."):
+    st.session_state.messages.append({"role": "user", "content": user_input})
     with st.chat_message("user"):
-        st.markdown(prompt)
+        st.markdown(user_input)
 
-    # Generate Assistant Response
-    response_text = f"Transmitting from **{current_world}**: Received message: *'{prompt}'*"
-    
     with st.chat_message("assistant"):
-        st.markdown(response_text)
-    st.session_state.messages.append({"role": "assistant", "content": response_text})
+        response_placeholder = st.empty()
+        full_response = ""
+
+        for token in generate_response_stream(st.session_state.messages):
+            full_response += token
+            response_placeholder.markdown(full_response + "▌")
+
+        response_placeholder.markdown(full_response)
+
+    st.session_state.messages.append({"role": "assistant", "content": full_response})
