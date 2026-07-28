@@ -69,8 +69,9 @@ def generate_response_stream(messages_history):
                         "parts": [{"text": msg["content"]}]
                     })
 
+                # Using valid Gemini model
                 response_stream = client.models.generate_content_stream(
-                    model="gemini-2.5-flash",
+                    model="gemini-1.5-flash",
                     contents=formatted_contents
                 )
 
@@ -82,7 +83,7 @@ def generate_response_stream(messages_history):
                     # Extract usage metadata from stream chunk
                     if hasattr(chunk, "usage_metadata") and chunk.usage_metadata:
                         usage_info = {
-                            "provider": "Gemini 2.5 Flash",
+                            "provider": "Gemini 1.5 Flash",
                             "prompt": chunk.usage_metadata.prompt_token_count or 0,
                             "completion": chunk.usage_metadata.candidates_token_count or 0,
                             "total": chunk.usage_metadata.total_token_count or 0,
