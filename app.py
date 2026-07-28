@@ -1,5 +1,4 @@
 import os
-import random
 import streamlit as st
 import streamlit.components.v1 as components
 from google import genai
@@ -13,28 +12,30 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# --- Load and Normalize Keys from Secrets ---
-def fetch_keys(primary_name, fallback_names):
-    keys = st.secrets.get(primary_name, [])
-    if isinstance(keys, str):
-        keys = [keys]
-    elif not isinstance(keys, list):
-        keys = list(keys)
-    
-    for name in fallback_names:
-        val = st.secrets.get(name) or os.environ.get(name)
+# --- Fetch Keys flexibly from Secrets or Env ---
+def get_all_keys(primary_name, single_names):
+    keys = []
+    sec_val = st.secrets.get(primary_name)
+    if isinstance(sec_val, (list, tuple)):
+        keys.extend([k for k in sec_val if k])
+    elif isinstance(sec_val, str) and sec_val:
+        keys.append(sec_val)
+
+    for s_name in single_names:
+        val = st.secrets.get(s_name) or os.environ.get(s_name)
         if val and val not in keys:
             keys.append(val)
+
     return keys
 
-gemini_keys = fetch_keys("GEMINI_KEYS", ["GEMINI_API_KEY", "GEMINI_KEY_1", "GEMINI_KEY_2"])
-groq_keys = fetch_keys("GROQ_KEYS", ["GROQ_API_KEY", "GROQ_KEY_1", "GROQ_KEY_2"])
+gemini_keys = get_all_keys("GEMINI_KEYS", ["GEMINI_API_KEY", "GEMINI_KEY_1", "GEMINI_KEY_2"])
+groq_keys = get_all_keys("GROQ_KEYS", ["GROQ_API_KEY", "GROQ_KEY_1", "GROQ_KEY_2"])
 
 # --- Session State ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# --- Custom Clean Styling ---
+# --- Custom Styling ---
 st.markdown(
     """
     <style>
@@ -182,10 +183,16 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# --- Automatic Multi-Engine & Multi-Key Response Generator ---
+# --- Multi-Engine Generator ---
 def generate_unified_response(prompt, history):
-    # 1. Try Groq Keys First
-    for key in groq_keys:
+    errors = []
+
+    if not groq_keys and not gemini_keys:
+        yield "⚠️ **No API keys found in Streamlit Secrets!**\n\nPlease add `GROQ_KEYS` or `GEMINI_KEYS` in your Streamlit Cloud Secrets settings."
+        return
+
+    # 1. Try Groq Keys
+    for idx, key in enumerate(groq_keys):
         try:
             client = Groq(api_key=key)
             formatted_messages = [{"role": "system", "content": "You are Orion, an advanced AI cosmic assistant."}] + [
@@ -201,11 +208,11 @@ def generate_unified_response(prompt, history):
                 if content:
                     yield content
             return
-        except Exception:
-            continue
+        except Exception as e:
+            errors.append(f"Groq Key #{idx+1} Error: {str(e)}")
 
-    # 2. Fallback to Gemini Keys if Groq keys fail or run out of quota
-    for key in gemini_keys:
+    # 2. Try Gemini Keys
+    for idx, key in enumerate(gemini_keys):
         try:
             client = genai.Client(api_key=key)
             response = client.models.generate_content_stream(
@@ -216,10 +223,12 @@ def generate_unified_response(prompt, history):
                 if chunk.text:
                     yield chunk.text
             return
-        except Exception:
-            continue
+        except Exception as e:
+            errors.append(f"Gemini Key #{idx+1} Error: {str(e)}")
 
-    yield "⚠️ Error: All 4 API keys (Groq & Gemini) failed or have missing keys in Streamlit Secrets."
+    # If all fail, display specific errors
+    error_summary = "\n- ".join(errors)
+    yield f"⚠️ **All API Key attempts failed:**\n\n- {error_summary}"
 
 # --- Chat Input ---
 user_query = st.chat_input("Ask Orion AI anything...", key="chat_input")
