@@ -22,7 +22,7 @@ gemini_keys = st.secrets.get("GEMINI_API_KEYS", [])
 
 def generate_response_stream(messages_history):
     """
-    Streams response text with failover and collects errors for debugging.
+    Streams response text with automatic failover between Groq and Gemini.
     """
     provider_pool = []
     for idx, k in enumerate(groq_keys, start=1):
@@ -44,24 +44,11 @@ def generate_response_stream(messages_history):
                     model="llama-3.3-70b-versatile",
                     messages=formatted_messages,
                     stream=True,
-                    stream_options={"include_usage": True},
                 )
 
-                usage_info = None
                 for chunk in completion:
                     if chunk.choices and chunk.choices[0].delta.content:
-                        yield chunk.choices[0].delta.content, None
-
-                    if hasattr(chunk, "usage") and chunk.usage:
-                        usage_info = {
-                            "provider": f"Groq ({label})",
-                            "prompt": chunk.usage.prompt_tokens,
-                            "completion": chunk.usage.completion_tokens,
-                            "total": chunk.usage.total_tokens,
-                        }
-
-                if usage_info:
-                    yield "", usage_info
+                        yield chunk.choices[0].delta.content, {"provider": f"Groq ({label})"}
                 return
 
             elif provider == "gemini":
@@ -78,28 +65,15 @@ def generate_response_stream(messages_history):
                     contents=formatted_contents
                 )
 
-                usage_info = None
                 for chunk in response_stream:
                     if chunk.text:
-                        yield chunk.text, None
-
-                    if hasattr(chunk, "usage_metadata") and chunk.usage_metadata:
-                        usage_info = {
-                            "provider": f"Gemini ({label})",
-                            "prompt": chunk.usage_metadata.prompt_token_count or 0,
-                            "completion": chunk.usage_metadata.candidates_token_count or 0,
-                            "total": chunk.usage_metadata.total_token_count or 0,
-                        }
-
-                if usage_info:
-                    yield "", usage_info
+                        yield chunk.text, {"provider": f"Gemini ({label})"}
                 return
 
         except Exception as e:
             error_logs.append(f"❌ **{label}**: `{e}`")
             continue
 
-    # If all keys failed, display the detailed breakdown:
     error_summary = "\n\n".join(error_logs)
     yield f"\n\n⚠️ **All API keys failed! Here is the breakdown:**\n\n{error_summary}", None
 
@@ -112,11 +86,7 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
         if "usage" in message and message["usage"]:
-            u = message["usage"]
-            st.caption(
-                f"⚡ **{u['provider']}** | "
-                f"Prompt: `{u['prompt']}` | Completion: `{u['completion']}` | Total: `{u['total']}` tokens"
-            )
+            st.caption(f"⚡ **{message['usage']['provider']}**")
 
 # User Chat Input
 if user_input := st.chat_input("Ask Orion anything..."):
@@ -127,25 +97,22 @@ if user_input := st.chat_input("Ask Orion anything..."):
     with st.chat_message("assistant"):
         response_placeholder = st.empty()
         full_response = ""
-        token_usage = None
+        provider_meta = None
 
-        for token, usage in generate_response_stream(st.session_state.messages):
+        for token, meta in generate_response_stream(st.session_state.messages):
             if token:
                 full_response += token
                 response_placeholder.markdown(full_response + "▌")
-            if usage:
-                token_usage = usage
+            if meta:
+                provider_meta = meta
 
         response_placeholder.markdown(full_response)
 
-        if token_usage:
-            st.caption(
-                f"⚡ **{token_usage['provider']}** | "
-                f"Prompt: `{token_usage['prompt']}` | Completion: `{token_usage['completion']}` | Total: `{token_usage['total']}` tokens"
-            )
+        if provider_meta:
+            st.caption(f"⚡ **{provider_meta['provider']}**")
 
     st.session_state.messages.append({
         "role": "assistant",
         "content": full_response,
-        "usage": token_usage
+        "usage": provider_meta
     })
