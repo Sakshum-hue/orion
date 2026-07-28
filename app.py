@@ -28,7 +28,7 @@ def get_all_keys(primary_name, single_names):
 
     return keys
 
-gemini_keys = get_all_keys("GEMINI_KEYS", ["GEMINI_API_KEY", "GEMINI_KEY_1", "GEMINI_KEY_2"])
+gemini_keys = get_all_keys("GEMINI_KEYS", ["GEMINI_API_KEYS", "GEMINI_API_KEY", "GEMINI_KEY_1", "GEMINI_KEY_2"])
 groq_keys = get_all_keys("GROQ_KEYS", ["GROQ_API_KEY", "GROQ_KEY_1", "GROQ_KEY_2"])
 
 # --- Session State ---
@@ -216,7 +216,7 @@ def generate_unified_response(prompt, history):
         try:
             client = genai.Client(api_key=key)
             response = client.models.generate_content_stream(
-                model="gemini-2.5-flash",
+                model="gemini-2.0-flash",
                 contents=prompt,
             )
             for chunk in response:
