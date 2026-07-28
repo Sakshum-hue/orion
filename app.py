@@ -22,12 +22,17 @@ gemini_keys = st.secrets.get("GEMINI_API_KEYS", [])
 
 def generate_response_stream(messages_history):
     """
-    Streams response text and yields token usage metadata upon stream completion.
+    Streams response text with failover and collects errors for debugging.
     """
-    provider_pool = [("groq", k) for k in groq_keys] + [("gemini", k) for k in gemini_keys]
-    last_exception = None
+    provider_pool = []
+    for idx, k in enumerate(groq_keys, start=1):
+        provider_pool.append(("groq", k, f"Groq Key #{idx}"))
+    for idx, k in enumerate(gemini_keys, start=1):
+        provider_pool.append(("gemini", k, f"Gemini Key #{idx}"))
 
-    for provider, key in provider_pool:
+    error_logs = []
+
+    for provider, key, label in provider_pool:
         try:
             if provider == "groq":
                 client = Groq(api_key=key)
@@ -39,7 +44,7 @@ def generate_response_stream(messages_history):
                     model="llama-3.3-70b-versatile",
                     messages=formatted_messages,
                     stream=True,
-                    stream_options={"include_usage": True},  # Enables token usage reporting
+                    stream_options={"include_usage": True},
                 )
 
                 usage_info = None
@@ -47,10 +52,9 @@ def generate_response_stream(messages_history):
                     if chunk.choices and chunk.choices[0].delta.content:
                         yield chunk.choices[0].delta.content, None
 
-                    # Extract usage metadata from final chunk
                     if hasattr(chunk, "usage") and chunk.usage:
                         usage_info = {
-                            "provider": "Groq (Llama 3.3 70B)",
+                            "provider": f"Groq ({label})",
                             "prompt": chunk.usage.prompt_tokens,
                             "completion": chunk.usage.completion_tokens,
                             "total": chunk.usage.total_tokens,
@@ -69,7 +73,6 @@ def generate_response_stream(messages_history):
                         "parts": [{"text": msg["content"]}]
                     })
 
-                # Active Gemini model identifier
                 response_stream = client.models.generate_content_stream(
                     model="gemini-2.0-flash",
                     contents=formatted_contents
@@ -80,10 +83,9 @@ def generate_response_stream(messages_history):
                     if chunk.text:
                         yield chunk.text, None
 
-                    # Extract usage metadata from stream chunk
                     if hasattr(chunk, "usage_metadata") and chunk.usage_metadata:
                         usage_info = {
-                            "provider": "Gemini 2.0 Flash",
+                            "provider": f"Gemini ({label})",
                             "prompt": chunk.usage_metadata.prompt_token_count or 0,
                             "completion": chunk.usage_metadata.candidates_token_count or 0,
                             "total": chunk.usage_metadata.total_token_count or 0,
@@ -94,10 +96,12 @@ def generate_response_stream(messages_history):
                 return
 
         except Exception as e:
-            last_exception = e
+            error_logs.append(f"❌ **{label}**: `{e}`")
             continue
 
-    yield f"\n\n⚠️ **All API keys exhausted or rate-limited.** Details: `{last_exception}`", None
+    # If all keys failed, display the detailed breakdown:
+    error_summary = "\n\n".join(error_logs)
+    yield f"\n\n⚠️ **All API keys failed! Here is the breakdown:**\n\n{error_summary}", None
 
 # 3. Streamlit Chat Session State
 if "messages" not in st.session_state:
