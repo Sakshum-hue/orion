@@ -22,17 +22,12 @@ gemini_keys = st.secrets.get("GEMINI_API_KEYS", [])
 
 def generate_response_stream(messages_history):
     """
-    Streams response text with automatic failover between Groq and Gemini.
+    Streams response text with automatic failover between underlying engines,
+    keeping all provider details strictly hidden from end-users.
     """
-    provider_pool = []
-    for idx, k in enumerate(groq_keys, start=1):
-        provider_pool.append(("groq", k, f"Groq Key #{idx}"))
-    for idx, k in enumerate(gemini_keys, start=1):
-        provider_pool.append(("gemini", k, f"Gemini Key #{idx}"))
+    provider_pool = [("groq", k) for k in groq_keys] + [("gemini", k) for k in gemini_keys]
 
-    error_logs = []
-
-    for provider, key, label in provider_pool:
+    for provider, key in provider_pool:
         try:
             if provider == "groq":
                 client = Groq(api_key=key)
@@ -48,7 +43,7 @@ def generate_response_stream(messages_history):
 
                 for chunk in completion:
                     if chunk.choices and chunk.choices[0].delta.content:
-                        yield chunk.choices[0].delta.content, {"provider": f"Groq ({label})"}
+                        yield chunk.choices[0].delta.content
                 return
 
             elif provider == "gemini":
@@ -67,15 +62,14 @@ def generate_response_stream(messages_history):
 
                 for chunk in response_stream:
                     if chunk.text:
-                        yield chunk.text, {"provider": f"Gemini ({label})"}
+                        yield chunk.text
                 return
 
-        except Exception as e:
-            error_logs.append(f"❌ **{label}**: `{e}`")
+        except Exception:
+            # Silently skip any key or provider error and try the next one
             continue
 
-    error_summary = "\n\n".join(error_logs)
-    yield f"\n\n⚠️ **All API keys failed! Here is the breakdown:**\n\n{error_summary}", None
+    yield "\n\n⚠️ **System temporarily unavailable.** Please try again in a few moments."
 
 # 3. Streamlit Chat Session State
 if "messages" not in st.session_state:
@@ -85,8 +79,6 @@ if "messages" not in st.session_state:
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
-        if "usage" in message and message["usage"]:
-            st.caption(f"⚡ **{message['usage']['provider']}**")
 
 # User Chat Input
 if user_input := st.chat_input("Ask Orion anything..."):
@@ -97,22 +89,14 @@ if user_input := st.chat_input("Ask Orion anything..."):
     with st.chat_message("assistant"):
         response_placeholder = st.empty()
         full_response = ""
-        provider_meta = None
 
-        for token, meta in generate_response_stream(st.session_state.messages):
-            if token:
-                full_response += token
-                response_placeholder.markdown(full_response + "▌")
-            if meta:
-                provider_meta = meta
+        for token in generate_response_stream(st.session_state.messages):
+            full_response += token
+            response_placeholder.markdown(full_response + "▌")
 
         response_placeholder.markdown(full_response)
-
-        if provider_meta:
-            st.caption(f"⚡ **{provider_meta['provider']}**")
 
     st.session_state.messages.append({
         "role": "assistant",
         "content": full_response,
-        "usage": provider_meta
     })
