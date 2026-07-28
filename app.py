@@ -10,31 +10,31 @@ st.set_page_config(
     page_title="Orion AI Assistant",
     page_icon="🕳️",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
-# --- Load Keys from Secrets ---
-gemini_keys = st.secrets.get("GEMINI_KEYS", [])
-groq_keys = st.secrets.get("GROQ_KEYS", [])
+# --- Load and Normalize Keys from Secrets ---
+def fetch_keys(primary_name, fallback_names):
+    keys = st.secrets.get(primary_name, [])
+    if isinstance(keys, str):
+        keys = [keys]
+    elif not isinstance(keys, list):
+        keys = list(keys)
+    
+    for name in fallback_names:
+        val = st.secrets.get(name) or os.environ.get(name)
+        if val and val not in keys:
+            keys.append(val)
+    return keys
 
-# Fallback for single environment variable names if list not used
-if not gemini_keys and st.secrets.get("GEMINI_API_KEY"):
-    gemini_keys = [st.secrets.get("GEMINI_API_KEY")]
-if not groq_keys and st.secrets.get("GROQ_API_KEY"):
-    groq_keys = [st.secrets.get("GROQ_API_KEY")]
+gemini_keys = fetch_keys("GEMINI_KEYS", ["GEMINI_API_KEY", "GEMINI_KEY_1", "GEMINI_KEY_2"])
+groq_keys = fetch_keys("GROQ_KEYS", ["GROQ_API_KEY", "GROQ_KEY_1", "GROQ_KEY_2"])
 
-# --- Sidebar Model Selection ---
-st.sidebar.title("⚡ Orion Core Setup")
-provider = st.sidebar.radio(
-    "Choose AI Intelligence Engine:",
-    ("Google Gemini (2.5 Flash)", "Groq (Llama 3.3 70B)")
-)
-
-# --- Session State Initialization ---
+# --- Session State ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# --- Custom Styling ---
+# --- Custom Clean Styling ---
 st.markdown(
     """
     <style>
@@ -58,7 +58,7 @@ st.markdown(
         bottom: 24px;
         left: 50%;
         transform: translateX(-50%);
-        width: 65% !important;
+        width: 70% !important;
         max-width: 800px;
         z-index: 999;
     }
@@ -182,38 +182,15 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# --- Helper Functions with Automatic Key Fallback ---
-def generate_gemini_stream(prompt, keys):
-    shuffled_keys = list(keys)
-    random.shuffle(shuffled_keys)  # Distribute load evenly across keys
-    
-    for key in shuffled_keys:
-        try:
-            client = genai.Client(api_key=key)
-            response = client.models.generate_content_stream(
-                model="gemini-2.5-flash",
-                contents=prompt,
-            )
-            for chunk in response:
-                if chunk.text:
-                    yield chunk.text
-            return
-        except Exception as e:
-            st.toast(f"Gemini Key failed, trying backup key... ({e})", icon="⚠️")
-            continue
-    yield "Error: All Gemini API keys failed or reached quota."
-
-def generate_groq_stream(messages, keys):
-    shuffled_keys = list(keys)
-    random.shuffle(shuffled_keys)  # Distribute load evenly across keys
-    
-    formatted_messages = [{"role": "system", "content": "You are Orion, an advanced AI cosmic assistant."}] + [
-        {"role": m["role"], "content": m["content"]} for m in messages
-    ]
-
-    for key in shuffled_keys:
+# --- Automatic Multi-Engine & Multi-Key Response Generator ---
+def generate_unified_response(prompt, history):
+    # 1. Try Groq Keys First
+    for key in groq_keys:
         try:
             client = Groq(api_key=key)
+            formatted_messages = [{"role": "system", "content": "You are Orion, an advanced AI cosmic assistant."}] + [
+                {"role": m["role"], "content": m["content"]} for m in history
+            ]
             completion = client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
                 messages=formatted_messages,
@@ -224,12 +201,27 @@ def generate_groq_stream(messages, keys):
                 if content:
                     yield content
             return
-        except Exception as e:
-            st.toast(f"Groq Key failed, trying backup key... ({e})", icon="⚠️")
+        except Exception:
             continue
-    yield "Error: All Groq API keys failed or reached quota."
 
-# --- Chat Input & AI Generation ---
+    # 2. Fallback to Gemini Keys if Groq keys fail or run out of quota
+    for key in gemini_keys:
+        try:
+            client = genai.Client(api_key=key)
+            response = client.models.generate_content_stream(
+                model="gemini-2.5-flash",
+                contents=prompt,
+            )
+            for chunk in response:
+                if chunk.text:
+                    yield chunk.text
+            return
+        except Exception:
+            continue
+
+    yield "⚠️ Error: All 4 API keys (Groq & Gemini) failed or have missing keys in Streamlit Secrets."
+
+# --- Chat Input ---
 user_query = st.chat_input("Ask Orion AI anything...", key="chat_input")
 
 if user_query:
@@ -238,15 +230,5 @@ if user_query:
         st.markdown(user_query)
 
     with st.chat_message("assistant"):
-        if "Gemini" in provider:
-            if not gemini_keys:
-                st.error("No Gemini API keys found in Secrets! Please check GEMINI_KEYS.")
-            else:
-                full_response = st.write_stream(generate_gemini_stream(user_query, gemini_keys))
-                st.session_state.messages.append({"role": "assistant", "content": full_response})
-        else:
-            if not groq_keys:
-                st.error("No Groq API keys found in Secrets! Please check GROQ_KEYS.")
-            else:
-                full_response = st.write_stream(generate_groq_stream(st.session_state.messages, groq_keys))
-                st.session_state.messages.append({"role": "assistant", "content": full_response})
+        full_response = st.write_stream(generate_unified_response(user_query, st.session_state.messages))
+        st.session_state.messages.append({"role": "assistant", "content": full_response})
